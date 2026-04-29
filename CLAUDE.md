@@ -1,3 +1,88 @@
+# agent-trading-skills — handover notes
+
+Reasoning-layer Claude Code skills for CFD day trading. Composes [`mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) (local broker access via MetaTrader 5) with [Calix](https://calix.fintrixmarkets.com) (economic + earnings calendar) and three news APIs (Finnhub / Marketaux / ForexNews).
+
+The canonical design is `cfd-trading-skills-plan.md` — read it before making any architectural decision. Persistent context (build state, user trading setup, conventions) lives in `~/.claude/projects/C--projects-cfd-trading-skills/memory/` — read MEMORY.md for the index.
+
+## Status (last updated 2026-04-29)
+
+Two of four skills shipped on `main`:
+- ✅ `cfd-position-sizer` — lot sizing + margin cross-check + swap-aware output
+- ✅ `trade-journal` — append-only JSONL with R-multiple, swap-only P&L, swing-trade lens
+- ⏳ `daily-risk-guardian` + `pre-trade-checklist` (paired, plan estimate 5–7h)
+- ⏳ `session-news-brief` (plan estimate 8–12h)
+
+137 pytest cases passing in ~0.5s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`.
+
+## Architecture in one paragraph
+
+Skills don't make MCP calls. The agent (Claude Code) reads a SKILL.md, fans out MCP tool calls (`get_account_info`, `get_quote`, `get_symbols`, `calc_margin`, `get_history`, `get_positions`, `get_rates`), bundles outputs as JSON, pipes to `python -m cfd_skills.cli.<name>`, and renders the JSON result. The CLI calls a pure function in `src/cfd_skills/` that takes Decimal-typed inputs and returns a Decimal-typed result. Tests pass plain dicts through the same `from_mcp` constructors production code uses — no `unittest.mock`.
+
+Decimal handling is strict: `decimal_io.D()` rejects floats at runtime; CLI serialises via `format(d, "f")` to avoid scientific notation. mt5-mcp's contract is "Decimal as string"; this repo preserves that boundary.
+
+## Layout
+
+```
+src/cfd_skills/        # pure-Python, Decimal-typed, no I/O at the package boundary
+  decimal_io.py        # D() coercion (rejects floats), floor_to_step, quantize_price
+  symbol_meta.py       # currencies-of-interest mapping, conversion-pair derivation
+  margin_calc.py       # EnCalcMode dispatch (ported 1:1 from cfd-claculator)
+  swap_calc.py         # daily swap per lot in deposit ccy + multi-night with 3x rollover
+  position_sizer.py    # skill 1 orchestrator
+  journal_io.py        # skill 2 schema-versioned write/read with strict validation
+  journal_stats.py     # skill 2 analytics
+  cli/{size,journal}.py
+.claude/skills/
+  cfd-position-sizer/SKILL.md + scripts/size.py
+  trade-journal/SKILL.md + scripts/journal.py
+tests/                 # pytest, no live broker required
+~/.cfd-skills/         # runtime files (not committed):
+  journal.jsonl        # trade journal
+  config.toml          # first-run setup will write this (skill 3)
+  daily_state.json     # NY-close session bookkeeping (skill 3)
+  news_cache/          # 60s on-disk cache (skill 4)
+```
+
+## Quick commands
+
+```bash
+# Setup (Python 3.14 venv already exists at .venv/)
+./.venv/Scripts/python.exe -m pip install -e ".[dev]"
+
+# Tests
+./.venv/Scripts/python.exe -m pytest tests/ -q
+
+# Smoke-test position sizer
+echo '<bundle>' | python -m cfd_skills.cli.size
+
+# Smoke-test journal
+echo '<entry>' | cfd-skills-journal write --json
+cfd-skills-journal stats --group-by all
+```
+
+## Conventions to preserve
+
+- **Conventional commit messages**, no `Co-Authored-By:` trailer (matches existing history in mt5-mcp and this repo).
+- **Decimal-typed money/price/volume everywhere**; reject floats at boundaries.
+- **JSON-stdin → pure function → JSON-stdout** for every skill's CLI surface. Skills don't import MCP libs.
+- **Hand-rolled fixture factories** (e.g. `_eurusd_blob()`) over mocks — schema drift fails loudly.
+- **Test fixtures parity** with cfd-claculator's `margin.test.ts` for any margin-related changes.
+- **Strict validation at write boundaries** (journal rejects naive datetimes, unknown enums, zero stop distance — bad data here poisons every retrospective query downstream).
+
+## Resuming
+
+Next skill is the paired build of `daily-risk-guardian` + `pre-trade-checklist`. Plan section "Skill 2 — daily-risk-guardian + pre-trade-checklist (paired build)" in `cfd-trading-skills-plan.md` covers the full design including the LLM-judged risk-free predicate, NY 4pm ET reset (Vincent is in AEST → 6am AEST), risk-budget cap (sum of per-position %, not hard count), and Calix integration for news-proximity check.
+
+User's stated trading defaults (locked in 2026-04-29; see memory `project_user_trading_setup.md`):
+- 1% per-trade max, 5% daily cap, 50% caution threshold
+- 5% concurrent risk budget; risk-free positions don't count
+- Default watchlist: XAUUSD, XAGUSD, USOIL, UKOIL, NAS100
+- Swing style: positive-carry plays (UKOIL +$125/lot/night), trail SL to breakeven then lock profit
+
+User said "I will test everything all in one at the end" — no live broker smoke test scheduled until all four skills land.
+
+---
+
 <!-- rtk-instructions v2 -->
 # RTK (Rust Token Killer) - Token-Optimized Commands
 

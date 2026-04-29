@@ -98,7 +98,7 @@ Render a concise summary covering:
 
 If the user accepts the hand-off:
 - For `pre-trade-checklist`: pass `{symbol, side, entry: suggested_entry, stop: invalidation}`.
-- For `cfd-position-sizer`: pass `{symbol, side, stop_distance}` (plus the user's account/quote bundle).
+- For `cfd-position-sizer`: pass `{symbol, side, stop_distance}` (plus the user's account/quote bundle). The setup's `stop_distance` field maps directly to the sizer's request — no manual tick-size conversion needed.
 
 ## Health & degradation
 

@@ -112,9 +112,10 @@ class SizingRequest:
     # Exactly one of these two.
     risk_pct: Optional[Decimal] = None     # e.g. Decimal("1.0") for 1%
     risk_amount: Optional[Decimal] = None  # absolute deposit-ccy amount
-    # Stop distance, expressed one of two ways.
+    # Stop distance, expressed one of three ways (exactly one required).
     stop_price: Optional[Decimal] = None       # absolute stop level
     stop_points: Optional[int] = None          # distance in symbol points
+    stop_distance: Optional[Decimal] = None    # distance in price units
     # Optional: planned holding nights for the swap-aware output.
     nights: int = 0
     # Optional: broker-authoritative margin from `calc_margin` MCP tool.
@@ -172,8 +173,20 @@ def _resolve_stop(
         else:
             stop_price = entry + sym.tick_size * points
         distance = sym.tick_size * points
+    elif req.stop_distance is not None:
+        # Price-units distance. Used by hand-offs from cfd-price-action,
+        # which emits ``stop_distance`` (e.g. "28.59" for $28.59 on XAUUSD)
+        # rather than tick counts. Convert to points using the symbol's
+        # tick_size and derive stop_price the same way as stop_points.
+        distance = D(req.stop_distance)
+        if req.side == "long":
+            stop_price = entry - distance
+        else:
+            stop_price = entry + distance
     else:
-        raise ValueError("Provide either stop_price or stop_points.")
+        raise ValueError(
+            "Provide one of stop_price, stop_points, or stop_distance."
+        )
     distance_points = int((distance / sym.tick_size).to_integral_value())
     return stop_price, distance_points
 

@@ -190,6 +190,74 @@ def test_resolve_max_size_zero_rejected() -> None:
         resolve_watchlist(default=_DEFAULT, max_size=0)
 
 
+def test_resolve_default_tier_translates_editorial_to_broker() -> None:
+    """Round-2 smoke-test bug: the calendar tier prefix-matched editorial
+    ``XAUUSD`` to broker ``XAUUSD.z``, but the default tier passed bare
+    ``XAUUSD`` through unchanged. With ``broker_catalog`` provided, the
+    default tier should now apply the same prefix-match so the watchlist
+    only ever contains symbols the broker actually offers."""
+    broker_catalog = ("XAUUSD.z", "XAGUSD.z", "USOIL", "UKOIL", "NAS100")
+    res = resolve_watchlist(
+        default=_DEFAULT,  # editorial: XAUUSD, XAGUSD, USOIL, UKOIL, NAS100
+        broker_catalog=broker_catalog,
+    )
+    # Editorial → broker translations:
+    assert "XAUUSD.z" in res.by_tier["default"]
+    assert "XAGUSD.z" in res.by_tier["default"]
+    # Symbols already in broker form stay as-is:
+    assert "USOIL" in res.by_tier["default"]
+    assert "UKOIL" in res.by_tier["default"]
+    assert "NAS100" in res.by_tier["default"]
+    # And the editorial bare names should NOT leak through:
+    assert "XAUUSD" not in res.by_tier["default"]
+    assert "XAGUSD" not in res.by_tier["default"]
+
+
+def test_resolve_default_tier_drops_unmapped_symbols() -> None:
+    """If the user's editorial default contains symbols the broker doesn't
+    offer (e.g. ``BTCUSD`` on a broker that lacks crypto), translation drops
+    them. The user can still see them silently filter out — the orchestrator
+    is responsible for surfacing missing data rather than the resolver."""
+    broker_catalog = ("XAUUSD.z", "USOIL")
+    res = resolve_watchlist(
+        default=("XAUUSD", "BTCUSD"),
+        broker_catalog=broker_catalog,
+    )
+    assert res.by_tier["default"] == ("XAUUSD.z",)
+
+
+def test_resolve_explicit_tier_also_translates() -> None:
+    """The explicit tier comes from user input, which may also be editorial.
+    Apply the same prefix-match as default tier."""
+    broker_catalog = ("XAUUSD.z",)
+    res = resolve_watchlist(
+        explicit=["XAUUSD"],
+        default=(),
+        broker_catalog=broker_catalog,
+    )
+    assert res.by_tier["explicit"] == ("XAUUSD.z",)
+
+
+def test_resolve_open_positions_pass_through_unchanged() -> None:
+    """Open positions come from the broker (``get_positions``) so they're
+    already in broker form — no translation needed. With the catalog
+    provided, the open_positions tier still receives them verbatim."""
+    broker_catalog = ("XAUUSD.z",)
+    res = resolve_watchlist(
+        open_position_symbols=["XAUUSD.z"],
+        default=(),
+        broker_catalog=broker_catalog,
+    )
+    assert res.by_tier["open_positions"] == ("XAUUSD.z",)
+
+
+def test_resolve_no_catalog_preserves_back_compat() -> None:
+    """Without a broker_catalog, all tiers pass through as-is — same as
+    pre-fix behaviour. Callers that don't have a catalog still work."""
+    res = resolve_watchlist(default=("XAUUSD", "USOIL"))
+    assert res.by_tier["default"] == ("XAUUSD", "USOIL")
+
+
 def test_description_summarises_contributions() -> None:
     res = resolve_watchlist(
         explicit=["BTCUSD"],

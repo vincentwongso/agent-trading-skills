@@ -13,6 +13,7 @@ import pytest
 
 from cfd_skills.cli.news import (
     _derive_currencies_from_meta,
+    _derive_currencypairs_from_meta,
     _is_equity_like_ticker,
     main,
 )
@@ -176,9 +177,16 @@ def test_watchlist_falls_back_to_default_when_no_inputs(
     bundle["bars_by_symbol"] = {}  # default symbols won't have bars → flagged
     rc, result, _ = _run(monkeypatch, bundle)
     assert rc == 0
-    # Default watchlist from config:
-    assert "XAUUSD" in result["watchlist"]
+    # The default tier intersects the editorial config defaults with the
+    # bundle's broker catalog (symbol_meta keys). The test bundle only has
+    # UKOIL meta, so only UKOIL survives from the default tuple. This is
+    # the round-2 fix for Bug #8: the default tier no longer leaks bare
+    # editorial names that the broker doesn't actually offer.
+    assert "UKOIL" in result["watchlist"]
     assert result["watchlist_by_tier"]["default"]
+    # Editorial bare names that the broker doesn't carry should NOT leak:
+    assert "XAUUSD" not in result["watchlist"]
+    assert "NAS100" not in result["watchlist"]
 
 
 def test_calendar_event_currencies_drive_watchlist(
@@ -293,6 +301,38 @@ class TestDeriveCurrenciesFromMeta:
         meta = {"XAUUSD.z": _meta(base="XAU", profit="USD", category="metals")}
         out = _derive_currencies_from_meta(["XAUUSD.z"], meta)
         assert "USD" in out
+
+
+class TestDeriveCurrencypairsFromMeta:
+    def test_emits_dash_pairs_per_symbol(self) -> None:
+        meta = {
+            "XAUUSD.z": _meta(base="XAU", profit="USD", category="metals"),
+            "EURUSD.z": _meta(base="EUR", profit="USD", category="forex"),
+        }
+        out = _derive_currencypairs_from_meta(["XAUUSD.z", "EURUSD.z"], meta)
+        assert out == {"XAU-USD", "EUR-USD"}
+
+    def test_skips_non_iso_currency_codes(self) -> None:
+        # UKOIL has currency_base="UKOIL" (5 letters) — ForexNews API only
+        # knows ISO-style 3-letter codes, so skip the symbol entirely rather
+        # than fabricate a fake pair.
+        meta = {
+            "UKOIL": _meta(base="UKOIL", profit="USD", category="commodities"),
+            "XAUUSD.z": _meta(base="XAU", profit="USD", category="metals"),
+        }
+        out = _derive_currencypairs_from_meta(["UKOIL", "XAUUSD.z"], meta)
+        assert out == {"XAU-USD"}
+
+    def test_skips_self_pair(self) -> None:
+        # Defensive: a symbol whose base == profit shouldn't yield ``USD-USD``.
+        meta = {"USDIDX": _meta(base="USD", profit="USD", category="indices")}
+        out = _derive_currencypairs_from_meta(["USDIDX"], meta)
+        assert out == set()
+
+    def test_skips_unknown_symbols(self) -> None:
+        meta = {"XAUUSD.z": _meta(base="XAU", profit="USD", category="metals")}
+        out = _derive_currencypairs_from_meta(["XAUUSD.z", "PHANTOM"], meta)
+        assert out == {"XAU-USD"}
 
 
 class TestIsEquityLikeTicker:

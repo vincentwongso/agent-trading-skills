@@ -189,6 +189,32 @@ def _derive_currencies_from_meta(
     return out
 
 
+def _derive_currencypairs_from_meta(
+    watchlist_symbols: Iterable[str],
+    symbol_meta: Mapping[str, "SymbolMeta"],
+) -> set[str]:
+    """Build dash-form currency pairs (``XAU-USD``) for each watchlist symbol.
+
+    ForexNews API rejects the ``currency`` query parameter and only accepts
+    ``currencypair`` in ``BASE-QUOTE`` form. Take ``currency_base`` and
+    ``currency_profit`` directly from the broker's symbol meta — the same
+    source used for the existing currency derivation, but emitted as a
+    pair rather than independent codes. Symbols whose base or profit isn't
+    a 3-letter ISO code (e.g. ``UKOIL`` where currency_base is ``UKOIL``)
+    are skipped because the API only knows ISO currency tickers.
+    """
+    out: set[str] = set()
+    for sym in watchlist_symbols:
+        meta = symbol_meta.get(sym)
+        if meta is None:
+            continue
+        base = (meta.currency_base or "").upper()
+        profit = (meta.currency_profit or "").upper()
+        if len(base) == 3 and len(profit) == 3 and base != profit:
+            out.add(f"{base}-{profit}")
+    return out
+
+
 def _fan_out_news(
     *,
     watchlist_symbols: list[str],
@@ -206,10 +232,11 @@ def _fan_out_news(
     mark_a, mark_s = marketaux.fetch(
         symbols=equity_tickers, lookback_hours=lookback_hours
     )
-    # ForexNews: derive ISO currency codes from broker meta rather than
-    # parsing the ticker. Handles suffix forms (XAUUSD.z) cleanly.
-    currencies = _derive_currencies_from_meta(watchlist_symbols, symbol_meta)
-    fx_a, fx_s = forexnews.fetch(currencies=sorted(currencies))
+    # ForexNews: derive dash-form currency pairs from broker meta. The API
+    # only accepts ``currencypair`` (rejects bare ``currency``) so each
+    # watchlist symbol becomes ``BASE-PROFIT`` (e.g. XAU-USD, EUR-USD).
+    pairs = _derive_currencypairs_from_meta(watchlist_symbols, symbol_meta)
+    fx_a, fx_s = forexnews.fetch(currencypairs=sorted(pairs))
     return (
         {"finnhub": fin_a, "marketaux": mark_a, "forexnews": fx_a},
         {"finnhub": fin_s, "marketaux": mark_s, "forexnews": fx_s},
@@ -291,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
             volatility_ranked=vol_ranked,
             default=config.watchlist.default,
             max_size=max_size,
+            broker_catalog=broker_catalog,
         )
 
         calix_blob = bundle.get("calix", {})

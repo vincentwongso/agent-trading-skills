@@ -27,7 +27,8 @@ Don't invoke for general market-data questions — those go through `mt5-market-
    - `risk_amount` (absolute deposit-currency amount).
 4. **Stop distance** — exactly one of:
    - `stop_price` (absolute price level), OR
-   - `stop_points` (distance in symbol points; 1 pip on a 5-digit FX pair = 10 points).
+   - `stop_points` (distance in symbol points; 1 pip on a 5-digit FX pair = 10 points), OR
+   - `stop_distance` (distance in price units, e.g. `"28.59"` for $28.59 on XAUUSD). Used directly by `cfd-price-action` hand-offs — pass through without conversion.
 5. **Nights held** (optional, integer) — if the user is sizing a swing trade and wants the swap-aware section, ask for the planned holding nights. Default to `0` (skip swap-for-holding).
 
 If the user's defaults are stored in `~/.cfd-skills/config.toml`, default `risk_pct` to `config.risk.per_trade_max_pct` (typically 1.0).

@@ -152,17 +152,38 @@ def resolve_watchlist(
     volatility_ranked: Iterable[str] | None = None,
     default: Iterable[str],
     max_size: int = 8,
+    broker_catalog: Iterable[str] | None = None,
 ) -> WatchlistResolution:
-    """Merge in priority order, dedupe (preserving first-seen position), cap."""
+    """Merge in priority order, dedupe (preserving first-seen position), cap.
+
+    When ``broker_catalog`` is provided, editorial-form names in the
+    ``explicit`` / ``volatility`` / ``default`` tiers are translated to their
+    broker-form counterparts via prefix-match (e.g. editorial ``XAUUSD`` →
+    broker ``XAUUSD.z``). ``calendar_symbols`` and ``open_position_symbols``
+    are assumed to already be broker-form (the news CLI applies the same
+    prefix-match in ``calendar_driven_symbols`` upstream; positions come
+    from the broker directly). Without the catalog, all tiers pass through
+    as-is — preserving back-compat for callers that don't have a catalog.
+    """
     if max_size <= 0:
         raise ValueError(f"max_size must be > 0, got {max_size}")
 
+    if broker_catalog is not None:
+        catalog = tuple(broker_catalog)
+        explicit_tier = _translate_to_broker(_normalise(explicit), catalog)
+        volatility_tier = _translate_to_broker(_normalise(volatility_ranked), catalog)
+        default_tier = _translate_to_broker(_normalise(default), catalog)
+    else:
+        explicit_tier = _normalise(explicit)
+        volatility_tier = _normalise(volatility_ranked)
+        default_tier = _normalise(default)
+
     tier_inputs: list[tuple[str, tuple[str, ...]]] = [
-        ("explicit", _normalise(explicit)),
+        ("explicit", explicit_tier),
         ("open_positions", _normalise(open_position_symbols)),
         ("calendar", _normalise(calendar_symbols)),
-        ("volatility", _normalise(volatility_ranked)),
-        ("default", _normalise(default)),
+        ("volatility", volatility_tier),
+        ("default", default_tier),
     ]
 
     by_tier: dict[str, tuple[str, ...]] = {}
@@ -192,6 +213,38 @@ def resolve_watchlist(
         by_tier=by_tier,
         description=description,
     )
+
+
+def _translate_to_broker(
+    syms: Iterable[str], catalog: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Map editorial symbols to broker-form via the catalog.
+
+    Order of precedence per editorial entry:
+      1. Exact case-insensitive match in the catalog → keep with broker casing.
+      2. Prefix match (``XAUUSD`` finds ``XAUUSD.z``) → emit each broker match
+         in catalog order.
+      3. No match → drop the symbol entirely. The news CLI excludes such
+         symbols from swing-candidate evaluation anyway because there's no
+         bar data, so leaving them in the watchlist only confuses the user.
+    """
+    catalog_by_upper: dict[str, str] = {b.upper(): b for b in catalog}
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in syms:
+        s_upper = s.upper()
+        if s_upper in catalog_by_upper:
+            broker_sym = catalog_by_upper[s_upper]
+            if broker_sym.upper() not in seen:
+                seen.add(broker_sym.upper())
+                out.append(broker_sym)
+            continue
+        for broker_sym in _match_editorial_to_broker(s, catalog):
+            key = broker_sym.upper()
+            if key not in seen:
+                seen.add(key)
+                out.append(broker_sym)
+    return tuple(out)
 
 
 def _normalise(syms: Optional[Iterable[str]]) -> tuple[str, ...]:

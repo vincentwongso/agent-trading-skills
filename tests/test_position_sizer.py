@@ -128,7 +128,7 @@ def test_either_risk_pct_or_amount_required():
 
 
 def test_either_stop_price_or_points_required():
-    with pytest.raises(ValueError, match="stop_price or stop_points"):
+    with pytest.raises(ValueError, match="stop_price, stop_points, or stop_distance"):
         size(
             request=SizingRequest(side="long", risk_pct=Decimal("1")),
             account=AccountInfo.from_mcp(_usd_account_blob()),
@@ -169,6 +169,42 @@ def test_short_with_explicit_stop_price():
         sym=SymbolInfo.from_mcp(_eurusd_blob()),
     )
     assert result.stop_distance_points == 200
+
+
+def test_long_with_stop_distance_in_price_units():
+    """Round-2 hand-off contract: cfd-price-action emits ``stop_distance``
+    (price units, e.g. ``"0.0020"`` on EURUSD = 20 pips). Sizer should
+    accept it and convert internally to points using tick_size."""
+    # 0.0020 / tick_size 0.00001 = 200 points.
+    result = size(
+        request=SizingRequest(
+            side="long",
+            risk_pct=Decimal("1"),
+            stop_distance=Decimal("0.0020"),
+        ),
+        account=AccountInfo.from_mcp(_usd_account_blob()),
+        quote=Quote.from_mcp(_quote_blob()),
+        sym=SymbolInfo.from_mcp(_eurusd_blob()),
+    )
+    assert result.stop_distance_points == 200
+    # entry=ask 1.0824, distance 0.0020 below → stop 1.0804.
+    assert result.stop_price == Decimal("1.0804")
+
+
+def test_short_with_stop_distance_in_price_units():
+    # entry=bid 1.0823, distance 0.0020 above → stop 1.0843.
+    result = size(
+        request=SizingRequest(
+            side="short",
+            risk_pct=Decimal("1"),
+            stop_distance=Decimal("0.0020"),
+        ),
+        account=AccountInfo.from_mcp(_usd_account_blob()),
+        quote=Quote.from_mcp(_quote_blob()),
+        sym=SymbolInfo.from_mcp(_eurusd_blob()),
+    )
+    assert result.stop_distance_points == 200
+    assert result.stop_price == Decimal("1.0843")
 
 
 # --- Sanity flags ---------------------------------------------------------

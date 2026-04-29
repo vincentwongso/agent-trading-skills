@@ -49,7 +49,7 @@ def _opt_d(v: Any) -> Decimal | None:
 
 def _request_from_dict(blob: dict) -> SizingRequest:
     kwargs: dict[str, Any] = {"side": blob["side"]}
-    for fld in ("risk_pct", "risk_amount", "stop_price", "broker_margin"):
+    for fld in ("risk_pct", "risk_amount", "stop_price", "stop_distance", "broker_margin"):
         if fld in blob and blob[fld] is not None:
             kwargs[fld] = D(blob[fld])
     if "stop_points" in blob and blob["stop_points"] is not None:

@@ -87,7 +87,16 @@ class NewsClientBase:
         return os.environ.get(self.api_key_env_var)
 
     def _client(self) -> httpx.Client:
-        kw: dict[str, Any] = {"base_url": self.base_url, "timeout": self.timeout}
+        # follow_redirects matters for ForexNews: hitting the bare /api/v1
+        # endpoint emits a 301 to /api/v1/ (trailing slash) and httpx defaults
+        # to NOT following, leaving us with an HTML body that fails JSON
+        # parsing. Other providers' explicit paths don't redirect, so this
+        # is benign for them.
+        kw: dict[str, Any] = {
+            "base_url": self.base_url,
+            "timeout": self.timeout,
+            "follow_redirects": True,
+        }
         if self.transport is not None:
             kw["transport"] = self.transport
         return httpx.Client(**kw)
@@ -266,7 +275,13 @@ def _marketaux_to_article(blob: dict[str, Any]) -> NewsArticle:
 
 @dataclass
 class ForexNewsClient(NewsClientBase):
-    """forexnewsapi.com /api/v1?currencypair=...&items=...&token=..."""
+    """forexnewsapi.com /api/v1?currencypair=...&items=...&token=...
+
+    Pairs must be in dash form (``EUR-USD``, ``XAU-USD``). The API returns
+    HTTP 403 + ``"Use one of required fields currencypair / currencypair-include
+    / currencypair-only"`` for any other input, including a bare ``currency``
+    parameter — it cannot be queried by single-currency feed.
+    """
     name: str = "forexnews"
     api_key_env_var: str = "FOREXNEWS_API_KEY"
     base_url: str = "https://forexnewsapi.com/api/v1"
@@ -275,28 +290,24 @@ class ForexNewsClient(NewsClientBase):
         self,
         *,
         currencypairs: Iterable[str] = (),
-        currencies: Iterable[str] = (),
         limit: int = 25,
     ) -> tuple[list[NewsArticle], str]:
         key = self._resolve_key()
         if not key:
             return [], "no_api_key"
         cp = ",".join(sorted({c.upper() for c in currencypairs if c}))
-        ccys = ",".join(sorted({c.upper() for c in currencies if c}))
-        if not cp and not ccys:
-            # ForexNews requires currencypair or currency — the bare base
-            # endpoint without either returns an HTML error page (parsed as
-            # schema_error). Skip cleanly with a no-fault status so the
-            # orchestrator doesn't flag NEWS_PROVIDER_DEGRADED.
+        if not cp:
+            # ForexNews requires at least one currencypair — the bare base
+            # endpoint returns an error page (parsed as schema_error after
+            # the 301 redirect to /api/v1/). Skip cleanly with a no-fault
+            # status so the orchestrator doesn't flag NEWS_PROVIDER_DEGRADED.
             return [], "no_query"
-        params: dict[str, Any] = {"items": str(min(limit, 50)), "token": key}
-        if cp:
-            params["currencypair"] = cp
-        else:
-            params["currency"] = ccys
-        cache_id = _cache_key(
-            self.name, {"cp": cp, "ccys": ccys, "n": limit}
-        )
+        params: dict[str, Any] = {
+            "currencypair": cp,
+            "items": str(min(limit, 50)),
+            "token": key,
+        }
+        cache_id = _cache_key(self.name, {"cp": cp, "n": limit})
         cached = _read_cache(self.cache_dir, cache_id, self.cache_seconds)
         if cached is not None:
             return [_forexnews_to_article(b) for b in cached], "cache"

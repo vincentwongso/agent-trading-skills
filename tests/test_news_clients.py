@@ -207,26 +207,33 @@ def _forexnews_blob() -> dict:
 
 def test_forexnews_no_api_key(tmp_path: Path) -> None:
     client = ForexNewsClient(cache_dir=tmp_path / "cache", api_key=None)
-    articles, status = client.fetch(currencies=["USD"])
+    articles, status = client.fetch(currencypairs=["EUR-USD"])
     assert status == "no_api_key"
 
 
 def test_forexnews_happy_path(tmp_path: Path) -> None:
+    captured: dict[str, str] = {}
+
     def handler(request: httpx.Request) -> httpx.Response:
+        captured["currencypair"] = request.url.params.get("currencypair", "")
+        captured["currency"] = request.url.params.get("currency", "")
         return httpx.Response(200, json={"data": [_forexnews_blob()]})
 
     client = _client(ForexNewsClient, handler, tmp_path)
-    articles, status = client.fetch(currencies=["USD", "EUR"])
+    articles, status = client.fetch(currencypairs=["EUR-USD", "XAU-USD"])
     assert status == "ok"
     a = articles[0]
     assert a.source == "forexnews"
     assert a.publisher == "FXStreet"
     assert "EUR" in a.keywords and "USD" in a.keywords
+    # Bug #4 regression: API requires currencypair, rejects bare currency.
+    assert captured["currencypair"] == "EUR-USD,XAU-USD"
+    assert captured["currency"] == ""
 
 
 def test_forexnews_skips_cleanly_when_no_input(tmp_path: Path) -> None:
-    """The bare ``/api/v1`` endpoint without currencypair or currency
-    returns an HTML error (parsed as schema_error). Skip with no_query
+    """The bare ``/api/v1`` endpoint without currencypair returns 301 →
+    HTML error (parsed as schema_error after redirect). Skip with no_query
     instead so the orchestrator doesn't flag NEWS_PROVIDER_DEGRADED for
     a request we never sent."""
     def handler(request: httpx.Request) -> httpx.Response:
@@ -244,10 +251,30 @@ def test_forexnews_handles_non_iso_date(tmp_path: Path) -> None:
         return httpx.Response(200, json={"data": [_forexnews_blob()]})
 
     client = _client(ForexNewsClient, handler, tmp_path)
-    articles, status = client.fetch(currencies=["USD"])
+    articles, status = client.fetch(currencypairs=["EUR-USD"])
     assert status == "ok"
     # Should not crash; falls back to "now" if parse fails.
     assert articles[0].published_at_utc is not None
+
+
+def test_forexnews_follows_redirect(tmp_path: Path) -> None:
+    """Round-2 smoke test bug: httpx default doesn't follow 301 → HTML body
+    fails JSON parse. The base URL ``/api/v1`` redirects to ``/api/v1/`` and
+    we must follow that for the API response to come through."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        # First hop: base /api/v1 (no trailing slash) → 301
+        if not request.url.path.endswith("/"):
+            return httpx.Response(
+                301,
+                headers={"Location": str(request.url.copy_with(path=request.url.path + "/"))},
+            )
+        # Second hop: trailing slash → real JSON.
+        return httpx.Response(200, json={"data": [_forexnews_blob()]})
+
+    client = _client(ForexNewsClient, handler, tmp_path)
+    articles, status = client.fetch(currencypairs=["EUR-USD"])
+    assert status == "ok"
+    assert len(articles) == 1
 
 
 # ---------- shared cache behaviour ----------------------------------------

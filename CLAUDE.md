@@ -6,13 +6,13 @@ The canonical design is `cfd-trading-skills-plan.md` — read it before making a
 
 ## Status (last updated 2026-04-29)
 
-Three of four skill bundles shipped on `main`:
+All four skill bundles shipped on `main`:
 - ✅ `cfd-position-sizer` — lot sizing + margin cross-check + swap-aware output
 - ✅ `trade-journal` — append-only JSONL with R-multiple, swap-only P&L, swing-trade lens
 - ✅ `daily-risk-guardian` + `pre-trade-checklist` (paired) — NY-close session reset, LLM-judged AT_RISK predicate, Calix proximity, EWMA spread baseline
-- ⏳ `session-news-brief` (plan estimate 8–12h)
+- ✅ `session-news-brief` — 5-tier watchlist resolver, 3-API news fan-out + dedup, ATR/RSI swing candidates, Calix calendar overlay
 
-261 pytest cases passing in ~0.7s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`.
+367 pytest cases passing in ~0.9s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`. End-to-end live broker smoke test still pending (user said "I will test everything all in one at the end").
 
 ## Architecture in one paragraph
 
@@ -35,15 +35,21 @@ src/cfd_skills/        # pure-Python, Decimal-typed, no I/O at the package bound
   daily_state.py       # skill 3 NY 4pm ET reset bookkeeping (zoneinfo, DST-safe)
   risk_state.py        # skill 3 Position dataclass + AT_RISK / RISK_FREE / LOCKED_PROFIT
   guardian.py          # skill 3 daily-risk-guardian orchestrator (CLEAR/CAUTION/HALT)
-  calix_client.py      # skill 3 Calix HTTPS client w/ 60s on-disk cache
+  calix_client.py      # skill 3+4 Calix HTTPS client w/ 60s on-disk cache
   spread_baseline.py   # skill 3 EWMA per-symbol spread baseline
   checklist.py         # skill 3 pre-trade-checklist orchestrator (PASS/WARN/BLOCK)
-  cli/{size,journal,guardian,checklist}.py
+  indicators.py        # skill 4 Wilder ATR/RSI + EMA on Decimal bars
+  news_dedup.py        # skill 4 URL canonicalisation, Levenshtein dedup, impact classifier
+  watchlist.py         # skill 4 5-tier resolver (explicit / positions / calendar / vol / default)
+  news_clients.py      # skill 4 Finnhub / Marketaux / ForexNews httpx clients
+  news_brief.py        # skill 4 session-news-brief orchestrator
+  cli/{size,journal,guardian,checklist,news}.py
 .claude/skills/
   cfd-position-sizer/SKILL.md + scripts/size.py
   trade-journal/SKILL.md + scripts/journal.py
   daily-risk-guardian/SKILL.md + scripts/guardian.py
   pre-trade-checklist/SKILL.md + scripts/checklist.py
+  session-news-brief/SKILL.md + scripts/news.py
 tests/                 # pytest, no live broker required
 ~/.cfd-skills/         # runtime files (not committed):
   journal.jsonl        # trade journal
@@ -51,8 +57,18 @@ tests/                 # pytest, no live broker required
   daily_state.json     # NY-close session bookkeeping
   spread_baseline.json # EWMA per-symbol spread baselines
   calix_cache/         # 60s on-disk Calix cache
-  news_cache/          # skill 4 (not yet built)
+  news_cache/          # 60s on-disk news cache (Finnhub / Marketaux / ForexNews)
 ```
+
+**API keys** for the news fan-out are read from environment variables — never config or code:
+
+| Provider | Env var |
+|---|---|
+| Finnhub | `FINNHUB_API_KEY` |
+| Marketaux | `MARKETAUX_API_KEY` |
+| ForexNews | `FOREXNEWS_API_KEY` |
+
+A missing key produces a `MISSING_NEWS_API_KEY` flag and that provider is skipped — the brief still runs with the other two.
 
 ## Quick commands
 
@@ -73,6 +89,9 @@ cfd-skills-journal stats --group-by all
 # Smoke-test guardian + checklist
 echo '<bundle>' | cfd-skills-guardian
 echo '<bundle>' | cfd-skills-checklist
+
+# Smoke-test news brief
+echo '<bundle>' | cfd-skills-news
 ```
 
 ## Conventions to preserve
@@ -86,15 +105,22 @@ echo '<bundle>' | cfd-skills-checklist
 
 ## Resuming
 
-Next skill is `session-news-brief` (skill 4). Plan section "Skill 4 — session-news-brief" in `cfd-trading-skills-plan.md` covers the design: Calix calendar+earnings + 3-API news fan-out (Finnhub / Marketaux / ForexNews) + ATR/RSI swing-candidates section + dynamic 5-tier watchlist resolver. Estimated 8–12h.
+All four skills are now shipped. The plan's "Risk-tier classification" + "Acceptance criteria" sections list per-skill guarantees that the existing tests cover. Outstanding items:
+
+1. **Live-broker smoke test.** User said "I will test everything all in one at the end" — none of the four skills has been run against a live MT5 terminal yet. Next session should walk through:
+   - Configure `~/.cfd-skills/config.toml` (writes default if missing on first invocation)
+   - Set `FINNHUB_API_KEY` / `MARKETAUX_API_KEY` / `FOREXNEWS_API_KEY` env vars (any missing keys are non-fatal but flagged)
+   - Run each skill end-to-end with the MT5 terminal connected
+2. **Optional follow-ups** the plan flagged but didn't require for v1:
+   - Correlation matrix for the checklist's exposure-overlap heuristic (currently shared-currency)
+   - Editorial NAS100 → constituent mapping for the calendar overlay (currently routes earnings to all index symbols)
+   - Sentiment classification on news articles (currently keyword-driven impact only)
 
 User's stated trading defaults (locked in 2026-04-29; see memory `project_user_trading_setup.md`):
 - 1% per-trade max, 5% daily cap, 50% caution threshold
 - 5% concurrent risk budget; risk-free positions don't count
 - Default watchlist: XAUUSD, XAGUSD, USOIL, UKOIL, NAS100
 - Swing style: positive-carry plays (UKOIL +$125/lot/night), trail SL to breakeven then lock profit
-
-User said "I will test everything all in one at the end" — no live broker smoke test scheduled until all four skills land.
 
 ---
 

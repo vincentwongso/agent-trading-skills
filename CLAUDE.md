@@ -6,13 +6,14 @@ The canonical design is `cfd-trading-skills-plan.md` — read it before making a
 
 ## Status (last updated 2026-04-29)
 
-All four skill bundles shipped on `main`:
+All five skill bundles shipped on `main`:
 - ✅ `cfd-position-sizer` — lot sizing + margin cross-check + swap-aware output
 - ✅ `trade-journal` — append-only JSONL with R-multiple, swap-only P&L, swing-trade lens
 - ✅ `daily-risk-guardian` + `pre-trade-checklist` (paired) — NY-close session reset, LLM-judged AT_RISK predicate, Calix proximity, EWMA spread baseline
 - ✅ `session-news-brief` — 5-tier watchlist resolver, 3-API news fan-out + dedup, ATR/RSI swing candidates, Calix calendar overlay
+- ✅ `cfd-price-action` — hybrid classical + ICT structural reader, 9 detectors, structural quality scoring, hands off to checklist + sizer
 
-367 pytest cases passing in ~0.9s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`. End-to-end live broker smoke test still pending (user said "I will test everything all in one at the end").
+443 pytest cases passing in ~1.0s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`. End-to-end live broker smoke test still pending (user said "I will test everything all in one at the end").
 
 ## Architecture in one paragraph
 
@@ -43,13 +44,16 @@ src/cfd_skills/        # pure-Python, Decimal-typed, no I/O at the package bound
   watchlist.py         # skill 4 5-tier resolver (explicit / positions / calendar / vol / default)
   news_clients.py      # skill 4 Finnhub / Marketaux / ForexNews httpx clients
   news_brief.py        # skill 4 session-news-brief orchestrator
-  cli/{size,journal,guardian,checklist,news}.py
+  price_action/        # skill 5 sub-package: bars, pivots, structure, fvg, order_block,
+                       # liquidity, context, scoring, schema, scan, detectors/{9 files}
+  cli/{size,journal,guardian,checklist,news,price_action}.py
 .claude/skills/
   cfd-position-sizer/SKILL.md + scripts/size.py
   trade-journal/SKILL.md + scripts/journal.py
   daily-risk-guardian/SKILL.md + scripts/guardian.py
   pre-trade-checklist/SKILL.md + scripts/checklist.py
   session-news-brief/SKILL.md + scripts/news.py
+  cfd-price-action/SKILL.md + scripts/price_action.py
 tests/                 # pytest, no live broker required
 ~/.cfd-skills/         # runtime files (not committed):
   journal.jsonl        # trade journal
@@ -92,6 +96,9 @@ echo '<bundle>' | cfd-skills-checklist
 
 # Smoke-test news brief
 echo '<bundle>' | cfd-skills-news
+
+# Smoke-test price action
+echo '<bundle>' | cfd-skills-price-action
 ```
 
 ## Conventions to preserve
@@ -105,9 +112,9 @@ echo '<bundle>' | cfd-skills-news
 
 ## Resuming
 
-All four skills are now shipped. The plan's "Risk-tier classification" + "Acceptance criteria" sections list per-skill guarantees that the existing tests cover. Outstanding items:
+All five skills are now shipped. The plan's "Risk-tier classification" + "Acceptance criteria" sections list per-skill guarantees that the existing tests cover. Outstanding items:
 
-1. **Live-broker smoke test.** User said "I will test everything all in one at the end" — none of the four skills has been run against a live MT5 terminal yet. Next session should walk through:
+1. **Live-broker smoke test.** User said "I will test everything all in one at the end" — none of the five skills has been run against a live MT5 terminal yet. Next session should walk through:
    - Configure `~/.cfd-skills/config.toml` (writes default if missing on first invocation)
    - Set `FINNHUB_API_KEY` / `MARKETAUX_API_KEY` / `FOREXNEWS_API_KEY` env vars (any missing keys are non-fatal but flagged)
    - Run each skill end-to-end with the MT5 terminal connected

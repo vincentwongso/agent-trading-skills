@@ -23,6 +23,7 @@ cfd-skills-journal = "cfd_skills.cli.journal:main"
 cfd-skills-guardian = "cfd_skills.cli.guardian:main"
 cfd-skills-checklist = "cfd_skills.cli.checklist:main"
 cfd-skills-news = "cfd_skills.cli.news:main"
+cfd-skills-price-action = "cfd_skills.cli.price_action:main"
 
 [build-system]
 requires = ["hatchling"]

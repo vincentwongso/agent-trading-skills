@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+.env
+dist/
+build/
+*.egg
+.mypy_cache/
+.ruff_cache/
+
+# Local skill state (per the plan, lives under ~/.cfd-skills/, but defensive
+# in case anyone develops with a project-local dir).
+.cfd-skills/
+
+# Claude Code scheduled-task locks (per-process, never checked in).
+.claude/scheduled_tasks.lock

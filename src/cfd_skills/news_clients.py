@@ -281,15 +281,19 @@ class ForexNewsClient(NewsClientBase):
         key = self._resolve_key()
         if not key:
             return [], "no_api_key"
-        params: dict[str, Any] = {"items": str(min(limit, 50)), "token": key}
         cp = ",".join(sorted({c.upper() for c in currencypairs if c}))
         ccys = ",".join(sorted({c.upper() for c in currencies if c}))
+        if not cp and not ccys:
+            # ForexNews requires currencypair or currency — the bare base
+            # endpoint without either returns an HTML error page (parsed as
+            # schema_error). Skip cleanly with a no-fault status so the
+            # orchestrator doesn't flag NEWS_PROVIDER_DEGRADED.
+            return [], "no_query"
+        params: dict[str, Any] = {"items": str(min(limit, 50)), "token": key}
         if cp:
             params["currencypair"] = cp
-        elif ccys:
-            params["currency"] = ccys
         else:
-            params["section"] = "general"
+            params["currency"] = ccys
         cache_id = _cache_key(
             self.name, {"cp": cp, "ccys": ccys, "n": limit}
         )

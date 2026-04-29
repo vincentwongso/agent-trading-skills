@@ -30,7 +30,10 @@ from cfd_skills.news_dedup import (
     NewsArticle,
     dedupe_articles,
 )
-from cfd_skills.symbol_meta import _INDEX_TO_CURRENCIES, currencies_of_interest
+from cfd_skills.symbol_meta import (
+    _EARNINGS_RELEVANT_INDICES,
+    currencies_of_interest,
+)
 from cfd_skills.watchlist import WatchlistResolution
 
 
@@ -142,8 +145,10 @@ def _ensure_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def _is_index(symbol: str) -> bool:
-    return symbol.upper() in _INDEX_TO_CURRENCIES
+def _is_earnings_relevant_index(symbol: str) -> bool:
+    """True for stock indices where constituent earnings move price.
+    False for commodity CFDs even though they're in ``_INDEX_TO_CURRENCIES``."""
+    return symbol.upper() in _EARNINGS_RELEVANT_INDICES
 
 
 def _symbol_currencies(meta: SymbolMeta) -> set[str]:
@@ -185,7 +190,7 @@ def _build_calendar_overlay(
                     detail={"currency": evt.currency},
                 ))
 
-        if _is_index(sym):
+        if _is_earnings_relevant_index(sym):
             for ent in earnings_entries:
                 if ent.scheduled_date == today_iso:
                     items.append(CalendarItem(
@@ -269,19 +274,28 @@ def _build_swing_candidates(
     watchlist: Iterable[str],
     bars_by_symbol: Mapping[str, list[Bar]],
     symbol_meta: Mapping[str, SymbolMeta],
-) -> tuple[list[SwingCandidate], list[str]]:
+) -> tuple[list[SwingCandidate], list[str], list[str]]:
+    """Returns (candidates, missing_data, insufficient_bars).
+
+    ``missing_data`` is symbols where the orchestrator didn't supply meta
+    or bars at all — that's a watchlist-resolution gap, not a math problem.
+    ``insufficient_bars`` is symbols where the bar series was present but
+    too short for ATR(14)/RSI(14)/EMA(20) — that's the only case worth
+    flagging as ``INDICATOR_DATA_INSUFFICIENT`` to the user.
+    """
     candidates: list[SwingCandidate] = []
-    skipped: list[str] = []
+    missing_data: list[str] = []
+    insufficient_bars: list[str] = []
     for sym in watchlist:
         meta = symbol_meta.get(sym)
         bars = bars_by_symbol.get(sym, [])
         if meta is None or not bars:
-            skipped.append(sym)
+            missing_data.append(sym)
             continue
         try:
             snap = snapshot(sym, bars)
         except InsufficientBars:
-            skipped.append(sym)
+            insufficient_bars.append(sym)
             continue
 
         if snap.rsi_14 < RSI_OVERSOLD and meta.swap_long > 0:
@@ -320,7 +334,7 @@ def _build_swing_candidates(
                 last_close=snap.last_close,
                 thesis=thesis,
             ))
-    return candidates, skipped
+    return candidates, missing_data, insufficient_bars
 
 
 def _build_health(
@@ -362,16 +376,26 @@ def build(inp: NewsBriefInput) -> NewsBriefResult:
         lookback_hours=inp.lookback_hours,
     )
 
-    swing_candidates, skipped = _build_swing_candidates(
+    swing_candidates, missing_data, insufficient_bars = _build_swing_candidates(
         watchlist=inp.watchlist.symbols,
         bars_by_symbol=inp.bars_by_symbol,
         symbol_meta=inp.symbol_meta,
     )
-    if skipped:
+    if insufficient_bars:
         flags.append("INDICATOR_DATA_INSUFFICIENT")
         notes.append(
-            "Indicators skipped for: " + ", ".join(skipped)
-            + " (need ≥21 D1 bars + symbol meta)."
+            "Indicators skipped (bar series too short) for: "
+            + ", ".join(insufficient_bars)
+            + " — need ≥21 D1 bars."
+        )
+    if missing_data:
+        # No flag — this is an orchestrator/watchlist gap, not a data quality
+        # signal. Surface it as a note so the user can see why a symbol
+        # silently dropped out of the swing-candidates evaluation.
+        notes.append(
+            "No bars or symbol meta supplied for: "
+            + ", ".join(missing_data)
+            + " — those symbols are excluded from swing-candidate evaluation."
         )
 
     health = _build_health(

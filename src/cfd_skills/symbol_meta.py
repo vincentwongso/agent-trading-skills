@@ -12,7 +12,9 @@ from __future__ import annotations
 
 # Symbols whose impact extends to a currency or commodity not encoded in
 # their ticker. Used by news / calendar skills to decide which Calix
-# currency filters to apply.
+# currency filters to apply. Includes both stock indices AND commodity CFDs
+# because both are sensitive to macro currency events (oil moves on USD,
+# UKOIL also on GBP via Brent's London pricing).
 _INDEX_TO_CURRENCIES: dict[str, set[str]] = {
     "US500": {"USD"},
     "US30": {"USD"},
@@ -26,6 +28,19 @@ _INDEX_TO_CURRENCIES: dict[str, set[str]] = {
     "AUS200": {"AUD"},
     "HK50": {"HKD"},
 }
+
+
+# Subset of the above that are *stock indices* — the only category for which
+# constituent earnings (e.g. AAPL, MSFT) drive intraday volatility. Oil CFDs
+# are excluded: a Microsoft beat doesn't move USOIL.
+_EARNINGS_RELEVANT_INDICES: frozenset[str] = frozenset({
+    "US500", "US30", "NAS100",
+    "GER40", "GER30",
+    "UK100",
+    "JPN225",
+    "AUS200",
+    "HK50",
+})
 
 
 def is_fx_pair(currency_base: str, currency_profit: str) -> bool:

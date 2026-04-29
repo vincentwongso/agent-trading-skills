@@ -224,14 +224,18 @@ def test_forexnews_happy_path(tmp_path: Path) -> None:
     assert "EUR" in a.keywords and "USD" in a.keywords
 
 
-def test_forexnews_falls_back_to_general_when_no_input(tmp_path: Path) -> None:
+def test_forexnews_skips_cleanly_when_no_input(tmp_path: Path) -> None:
+    """The bare ``/api/v1`` endpoint without currencypair or currency
+    returns an HTML error (parsed as schema_error). Skip with no_query
+    instead so the orchestrator doesn't flag NEWS_PROVIDER_DEGRADED for
+    a request we never sent."""
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.params.get("section") == "general"
-        return httpx.Response(200, json={"data": []})
+        raise AssertionError(f"Should not have hit network: {request.url}")
 
     client = _client(ForexNewsClient, handler, tmp_path)
     articles, status = client.fetch()
-    assert status == "ok"
+    assert articles == []
+    assert status == "no_query"
 
 
 def test_forexnews_handles_non_iso_date(tmp_path: Path) -> None:

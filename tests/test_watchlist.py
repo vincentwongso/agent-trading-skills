@@ -41,6 +41,24 @@ def test_lowercase_currency_normalised() -> None:
     assert "EURUSD" in symbols_for_currencies(["eur"])
 
 
+def test_filter_matches_broker_suffix_form() -> None:
+    """Editorial ``XAUUSD`` matches broker ``XAUUSD.z`` via prefix.
+    Returned strings preserve the broker's casing so they round-trip
+    through MCP. Regression guard for the smoke-test bug where the
+    calendar tier emitted bare ``XAUUSD`` that Fintrix doesn't carry."""
+    broker_catalog = ("XAUUSD.z", "XAGUSD.z", "USOIL", "UKOIL", "NAS100")
+    out = symbols_for_currencies(["USD"], base_universe=broker_catalog)
+    # Suffix-form matches:
+    assert "XAUUSD.z" in out
+    assert "XAGUSD.z" in out
+    # Bare-form also matches (no suffix needed):
+    assert "USOIL" in out
+    assert "NAS100" in out
+    # And nothing not in the broker catalog gets emitted:
+    assert "EURUSD" not in out
+    assert "EURUSD.z" not in out
+
+
 # ---------- calendar_driven_symbols ----------------------------------------
 
 
@@ -145,9 +163,17 @@ def test_max_size_caps_total() -> None:
     assert res.symbols[:3] == ("A", "B", "C")
 
 
-def test_resolve_uppercases_inputs() -> None:
-    res = resolve_watchlist(explicit=["xauusd"], default=_DEFAULT)
-    assert res.symbols[0] == "XAUUSD"
+def test_resolve_preserves_input_case_with_case_insensitive_dedup() -> None:
+    # Broker symbol form is the source of truth — preserve caller casing.
+    res = resolve_watchlist(explicit=["xauusd.z"], default=_DEFAULT)
+    assert res.symbols[0] == "xauusd.z"
+
+    # But case-only variants collapse to the first-seen form.
+    res = resolve_watchlist(
+        explicit=["XAUUSD.z", "xauusd.z", "XAUUSD.Z"],
+        default=_DEFAULT,
+    )
+    assert res.by_tier["explicit"] == ("XAUUSD.z",)
 
 
 def test_resolve_dedupes_within_a_tier() -> None:

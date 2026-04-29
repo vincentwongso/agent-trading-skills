@@ -4,13 +4,35 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from cfd_skills.cli.news import main
+from cfd_skills.cli.news import (
+    _derive_currencies_from_meta,
+    _is_equity_like_ticker,
+    main,
+)
+from cfd_skills.news_brief import SymbolMeta
+from decimal import Decimal
+
+
+@pytest.fixture(autouse=True)
+def _isolate_news_api_keys():
+    """``main()`` auto-loads ``./.env`` via ``os.environ.setdefault`` (so real
+    shell env wins over the file). That bypasses monkeypatch's restore tracking,
+    so the keys leak into other tests in the same pytest run. Save + restore
+    around every test in this module."""
+    keys = ("FINNHUB_API_KEY", "MARKETAUX_API_KEY", "FOREXNEWS_API_KEY")
+    saved = {k: os.environ.pop(k, None) for k in keys}
+    yield
+    for k in keys:
+        os.environ.pop(k, None)
+        if saved[k] is not None:
+            os.environ[k] = saved[k]
 
 
 def _bar_blobs(closes: list[str], spread: str = "1.0") -> list[dict]:
@@ -165,10 +187,23 @@ def test_calendar_event_currencies_drive_watchlist(
     bundle = _bundle(tmp_path)
     bundle["explicit_watchlist"] = []
     bundle["calendar_event_currencies"] = ["USD"]
+    # Calendar tier intersects the editorial USD map with the bundle's
+    # broker catalog (symbol_meta keys). Add USD-relevant entries so the
+    # tier has something to surface.
+    bundle["symbol_meta"]["XAUUSD.z"] = {
+        "currency_base": "XAU",
+        "currency_profit": "USD",
+        "category": "metals",
+        "swap_long": "-60",
+        "swap_short": "40",
+    }
+    bundle["bars_by_symbol"]["XAUUSD.z"] = _bar_blobs(
+        [str(2300 + i * 5) for i in range(25)]
+    )
     rc, result, _ = _run(monkeypatch, bundle)
     assert rc == 0
-    # USD-driven symbols should appear in calendar tier:
-    assert any(s for s in result["watchlist_by_tier"]["calendar"])
+    # XAUUSD.z is the broker form of editorial XAUUSD, so it appears verbatim:
+    assert "XAUUSD.z" in result["watchlist_by_tier"]["calendar"]
 
 
 # ---------- health flags --------------------------------------------------
@@ -221,6 +256,62 @@ def test_env_file_flag_loads_keys_into_environ(
             os.environ.pop(k, None)
             if saved[k] is not None:
                 os.environ[k] = saved[k]
+
+
+# ---------- fan-out helpers (regression guards from smoke test) ------------
+
+
+def _meta(base: str, profit: str, category: str = "metals") -> SymbolMeta:
+    return SymbolMeta(
+        symbol="X",
+        currency_base=base,
+        currency_profit=profit,
+        category=category,
+        swap_long=Decimal("0"),
+        swap_short=Decimal("0"),
+    )
+
+
+class TestDeriveCurrenciesFromMeta:
+    def test_extracts_3letter_codes_from_meta(self) -> None:
+        meta = {
+            "XAUUSD.z": _meta(base="XAU", profit="USD", category="metals"),
+            "EURUSD.z": _meta(base="EUR", profit="USD", category="forex"),
+        }
+        out = _derive_currencies_from_meta(["XAUUSD.z", "EURUSD.z"], meta)
+        assert out == {"XAU", "USD", "EUR"}
+
+    def test_skips_symbols_with_no_meta(self) -> None:
+        meta = {"UKOIL": _meta(base="UKOIL", profit="USD", category="commodities")}
+        # UKOIL.currency_base is 5 letters → skipped. Only USD makes it.
+        out = _derive_currencies_from_meta(["UKOIL", "PHANTOM"], meta)
+        assert out == {"USD"}
+
+    def test_handles_suffix_form_via_meta_lookup(self) -> None:
+        """Smoke-test bug: the old length-6 heuristic missed XAUUSD.z (8 chars)
+        and emitted no currencies → ForexNews schema_error."""
+        meta = {"XAUUSD.z": _meta(base="XAU", profit="USD", category="metals")}
+        out = _derive_currencies_from_meta(["XAUUSD.z"], meta)
+        assert "USD" in out
+
+
+class TestIsEquityLikeTicker:
+    def test_accepts_short_alpha_uppercase(self) -> None:
+        assert _is_equity_like_ticker("AAPL")
+        assert _is_equity_like_ticker("MSFT")
+        assert _is_equity_like_ticker("SPY")
+
+    def test_rejects_suffix_form(self) -> None:
+        assert not _is_equity_like_ticker("XAUUSD.z")
+        assert not _is_equity_like_ticker("XAUUSD.Z")
+
+    def test_rejects_symbols_with_digits(self) -> None:
+        assert not _is_equity_like_ticker("NAS100")
+        assert not _is_equity_like_ticker("US500")
+
+    def test_rejects_long_or_lowercase(self) -> None:
+        assert not _is_equity_like_ticker("XAUUSD")  # 6 chars, too long
+        assert not _is_equity_like_ticker("aapl")
 
 
 # ---------- error handling -------------------------------------------------

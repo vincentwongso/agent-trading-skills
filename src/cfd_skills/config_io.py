@@ -194,16 +194,28 @@ def _config_from_dict(blob: dict[str, Any]) -> Config:
     )
 
 
-def load_config(path: Path | None = None) -> Config:
+def load_config(
+    path: Path | None = None,
+    *,
+    write_default_if_missing: bool = False,
+) -> Config:
     """Load config from ``path`` (defaults to ``~/.cfd-skills/config.toml``).
 
-    Returns ``default_config()`` if the file is missing — callers can detect
-    this by comparing against ``default_config()`` if they need to trigger a
-    first-run prompt.
+    Returns ``default_config()`` if the file is missing. When
+    ``write_default_if_missing=True`` the defaults are also persisted to disk
+    so the user has a file to customize. CLIs use that mode; tests pass
+    explicit paths and skip the auto-write.
     """
     target = path if path is not None else DEFAULT_CONFIG_PATH
     if not target.exists():
-        return default_config()
+        cfg = default_config()
+        if write_default_if_missing:
+            try:
+                write_config(cfg, target)
+            except OSError:
+                # Non-fatal — still return defaults so the CLI can run.
+                pass
+        return cfg
     with target.open("rb") as f:
         blob = tomllib.load(f)
     return _config_from_dict(blob)

@@ -66,7 +66,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 from cfd_skills.checklist import CalixEarningsEntry, CalixEconomicEvent
 from cfd_skills.config_io import DEFAULT_CONFIG_PATH, load_config
@@ -117,8 +117,8 @@ def _parse_now(blob: dict[str, Any]) -> datetime:
 def _parse_symbol_meta(blob: dict[str, Any]) -> dict[str, SymbolMeta]:
     out: dict[str, SymbolMeta] = {}
     for sym, m in blob.items():
-        out[sym.upper()] = SymbolMeta(
-            symbol=sym.upper(),
+        out[sym] = SymbolMeta(
+            symbol=sym,
             currency_base=str(m.get("currency_base", "")),
             currency_profit=str(m.get("currency_profit", "")),
             category=str(m.get("category", "")),
@@ -129,7 +129,7 @@ def _parse_symbol_meta(blob: dict[str, Any]) -> dict[str, SymbolMeta]:
 
 
 def _parse_bars(blob: dict[str, Any]) -> dict[str, list[Bar]]:
-    return {sym.upper(): bars_from_mcp(b) for sym, b in blob.items()}
+    return {sym: bars_from_mcp(b) for sym, b in blob.items()}
 
 
 def _parse_article(blob: dict[str, Any]) -> NewsArticle:
@@ -159,26 +159,56 @@ def _parse_article(blob: dict[str, Any]) -> NewsArticle:
     )
 
 
+def _is_equity_like_ticker(symbol: str) -> bool:
+    """Marketaux's ``symbols`` filter is intended for equity/index tickers
+    (AAPL, MSFT, SPY, ^GSPC...). Broker CFD names like ``XAUUSD.z`` or
+    ``USOIL`` aren't in its entity space — passing them returns zero
+    articles instead of broadening to the general feed. Heuristic: short
+    all-alpha all-uppercase token with no digits or dots."""
+    if not (1 <= len(symbol) <= 5):
+        return False
+    return symbol.isalpha() and symbol.isupper()
+
+
+def _derive_currencies_from_meta(
+    watchlist_symbols: Iterable[str],
+    symbol_meta: Mapping[str, "SymbolMeta"],
+) -> set[str]:
+    """Use the broker-supplied currency_base/currency_profit on each symbol's
+    meta — robust to suffix forms (``XAUUSD.z``) that the old length-6
+    heuristic missed."""
+    out: set[str] = set()
+    for sym in watchlist_symbols:
+        meta = symbol_meta.get(sym)
+        if meta is None:
+            continue
+        if meta.currency_base and len(meta.currency_base) == 3:
+            out.add(meta.currency_base.upper())
+        if meta.currency_profit and len(meta.currency_profit) == 3:
+            out.add(meta.currency_profit.upper())
+    return out
+
+
 def _fan_out_news(
     *,
     watchlist_symbols: list[str],
+    symbol_meta: Mapping[str, "SymbolMeta"],
     lookback_hours: int,
 ) -> tuple[dict[str, list[NewsArticle]], dict[str, str]]:
     finnhub = FinnhubClient()
     marketaux = MarketauxClient()
     forexnews = ForexNewsClient()
     fin_a, fin_s = finnhub.fetch_general(lookback_hours=lookback_hours)
+    # Marketaux: filter only to symbols that look like equity tickers it can
+    # recognize. CFD broker names (XAUUSD.z, USOIL) drop through to the
+    # general feed where downstream relevance matching does the picking.
+    equity_tickers = [s for s in watchlist_symbols if _is_equity_like_ticker(s)]
     mark_a, mark_s = marketaux.fetch(
-        symbols=watchlist_symbols, lookback_hours=lookback_hours
+        symbols=equity_tickers, lookback_hours=lookback_hours
     )
-    # Derive currency list from watchlist for ForexNews.
-    currencies: set[str] = set()
-    for s in watchlist_symbols:
-        upper = s.upper()
-        # Naive heuristic — symbol contains 3-letter currency codes.
-        if len(upper) == 6:
-            currencies.add(upper[:3])
-            currencies.add(upper[3:])
+    # ForexNews: derive ISO currency codes from broker meta rather than
+    # parsing the ticker. Handles suffix forms (XAUUSD.z) cleanly.
+    currencies = _derive_currencies_from_meta(watchlist_symbols, symbol_meta)
     fx_a, fx_s = forexnews.fetch(currencies=sorted(currencies))
     return (
         {"finnhub": fin_a, "marketaux": mark_a, "forexnews": fx_a},
@@ -220,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config_path = Path(bundle.get("config_path", DEFAULT_CONFIG_PATH))
-        config = load_config(config_path)
+        config = load_config(config_path, write_default_if_missing=True)
         now_utc = _parse_now(bundle)
 
         lookahead = int(bundle.get("lookahead_hours", DEFAULT_CALENDAR_LOOKAHEAD_HOURS))
@@ -233,10 +263,25 @@ def main(argv: list[str] | None = None) -> int:
         earnings_idx = list(bundle.get("earnings_constituent_indices") or [])
         vol_ranked = list(bundle.get("volatility_ranked") or [])
 
+        symbol_meta = _parse_symbol_meta(bundle.get("symbol_meta", {}))
+        bars_by_symbol = _parse_bars(bundle.get("bars_by_symbol", {}))
+
+        # The calendar-driven tier is sourced from a hard-coded editorial
+        # ``_CURRENCY_TO_SYMBOLS`` map (e.g. USD → XAUUSD/XAGUSD/NAS100/...).
+        # Those names may not match the broker's actual symbol catalog
+        # (Fintrix uses ``XAUUSD.z``, not ``XAUUSD``). Intersect with the
+        # bundle's ``symbol_meta`` keys — that's the broker-confirmed catalog
+        # the agent has bars for. Falls back to the configured base_universe
+        # only if the bundle didn't carry any meta.
+        if symbol_meta:
+            broker_catalog: tuple[str, ...] | None = tuple(symbol_meta.keys())
+        else:
+            broker_catalog = config.watchlist.base_universe
+
         cal_driven = list(calendar_driven_symbols(
             economic_event_currencies=cal_currencies,
             earnings_constituents_for_indices=earnings_idx,
-            base_universe=config.watchlist.base_universe,
+            base_universe=broker_catalog,
         ))
 
         watchlist_res = resolve_watchlist(
@@ -247,9 +292,6 @@ def main(argv: list[str] | None = None) -> int:
             default=config.watchlist.default,
             max_size=max_size,
         )
-
-        symbol_meta = _parse_symbol_meta(bundle.get("symbol_meta", {}))
-        bars_by_symbol = _parse_bars(bundle.get("bars_by_symbol", {}))
 
         calix_blob = bundle.get("calix", {})
         economic_events = [
@@ -273,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             articles_by_provider, provider_status = _fan_out_news(
                 watchlist_symbols=list(watchlist_res.symbols),
+                symbol_meta=symbol_meta,
                 lookback_hours=lookback,
             )
     except (KeyError, TypeError, ValueError) as exc:

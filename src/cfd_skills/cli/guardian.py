@@ -101,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config_path = Path(bundle.get("config_path", DEFAULT_CONFIG_PATH))
         state_path = Path(bundle.get("state_path", DEFAULT_STATE_PATH))
-        config = load_config(config_path)
+        config = load_config(config_path, write_default_if_missing=True)
         now_utc = _parse_now(bundle)
         account = AccountSnapshot.from_mcp(bundle["account"])
         positions = _build_positions(bundle.get("positions", []))

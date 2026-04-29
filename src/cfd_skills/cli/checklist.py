@@ -144,14 +144,14 @@ def main(argv: list[str] | None = None) -> int:
         baseline_path = Path(
             bundle.get("spread_baseline_path", DEFAULT_BASELINE_PATH)
         )
-        config = load_config(config_path)
+        config = load_config(config_path, write_default_if_missing=True)
         now_utc = _parse_now(bundle)
         account = AccountSnapshot.from_mcp(bundle["account"])
         positions = _build_positions(bundle.get("positions", []))
         realized = D(bundle.get("realized_pnl_today", "0"))
 
         target = bundle["target"]
-        target_symbol = str(target["symbol"]).upper()
+        target_symbol = str(target["symbol"])
         target_side = str(target["side"]).lower()
         if target_side not in ("long", "short"):
             raise ValueError(f"target.side must be long/short, got {target_side!r}")

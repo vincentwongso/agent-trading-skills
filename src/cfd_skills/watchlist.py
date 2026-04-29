@@ -50,6 +50,25 @@ class WatchlistResolution:
         return "default"
 
 
+def _match_editorial_to_broker(
+    editorial: str, broker_catalog: Iterable[str]
+) -> tuple[str, ...]:
+    """Find broker symbols matching an editorial root.
+
+    Editorial entry ``XAUUSD`` matches broker ``XAUUSD`` exactly, or any
+    suffixed form like ``XAUUSD.z`` / ``XAUUSD.r``. Match is case-insensitive
+    on the editorial root; the returned strings preserve the broker's casing
+    so they round-trip through MCP cleanly.
+    """
+    editorial_upper = editorial.upper()
+    matches: list[str] = []
+    for broker_sym in broker_catalog:
+        b_upper = broker_sym.upper()
+        if b_upper == editorial_upper or b_upper.startswith(editorial_upper + "."):
+            matches.append(broker_sym)
+    return tuple(matches)
+
+
 def symbols_for_currencies(
     currencies: Iterable[str],
     *,
@@ -57,9 +76,11 @@ def symbols_for_currencies(
 ) -> tuple[str, ...]:
     """Map a set of currency codes to their liquid CFD symbols.
 
-    If ``base_universe`` is provided, results are filtered to it — this
-    keeps "I trade XAUUSD/UKOIL/NAS100" users from seeing JPY pairs they
-    don't follow.
+    If ``base_universe`` is provided, the editorial symbols are translated
+    to broker form via prefix match — ``XAUUSD`` editorial finds ``XAUUSD.z``
+    in the catalog. This keeps the calendar tier from emitting names the
+    broker doesn't actually offer (which would silently dead-end downstream
+    when the orchestrator looks up bars/meta).
     """
     raw: list[str] = []
     seen: set[str] = set()
@@ -71,8 +92,17 @@ def symbols_for_currencies(
                 raw.append(sym)
     if base_universe is None:
         return tuple(raw)
-    base_set = {s.upper() for s in base_universe}
-    return tuple(s for s in raw if s.upper() in base_set)
+
+    catalog = tuple(base_universe)
+    out: list[str] = []
+    out_seen: set[str] = set()
+    for editorial in raw:
+        for broker_sym in _match_editorial_to_broker(editorial, catalog):
+            key = broker_sym.upper()
+            if key not in out_seen:
+                out_seen.add(key)
+                out.append(broker_sym)
+    return tuple(out)
 
 
 def calendar_driven_symbols(
@@ -87,18 +117,30 @@ def calendar_driven_symbols(
     for sym in symbols_for_currencies(
         economic_event_currencies, base_universe=base_universe
     ):
-        if sym not in seen:
-            seen.add(sym)
+        key = sym.upper()
+        if key not in seen:
+            seen.add(key)
             out.append(sym)
     # If any earnings entries were flagged for index constituents, surface
     # the indices themselves. The caller passes the *index symbols* (e.g.
-    # ["NAS100"]) — actual constituent → index mapping is editorial.
+    # ["NAS100"]) — actual constituent → index mapping is editorial. Same
+    # broker-catalog prefix match as above so ``NAS100`` in editorial finds
+    # ``NAS100.cash`` etc. if the broker uses suffix form.
+    catalog = tuple(base_universe) if base_universe is not None else None
     for idx in earnings_constituents_for_indices:
         idx_upper = idx.upper()
-        if idx_upper in _INDEX_TO_CURRENCIES and idx_upper not in seen:
-            if base_universe is None or idx_upper in {s.upper() for s in base_universe}:
+        if idx_upper not in _INDEX_TO_CURRENCIES:
+            continue
+        if catalog is None:
+            if idx_upper not in seen:
                 seen.add(idx_upper)
                 out.append(idx_upper)
+        else:
+            for broker_sym in _match_editorial_to_broker(idx, catalog):
+                key = broker_sym.upper()
+                if key not in seen:
+                    seen.add(key)
+                    out.append(broker_sym)
     return tuple(out)
 
 
@@ -153,15 +195,21 @@ def resolve_watchlist(
 
 
 def _normalise(syms: Optional[Iterable[str]]) -> tuple[str, ...]:
+    """Trim, drop empties, dedupe case-insensitively while preserving the
+    first-seen original case. Broker symbol form is the source of truth —
+    `XAUUSD.z` and `XAUUSD.Z` collapse, but the caller's casing wins."""
     if syms is None:
         return ()
     out: list[str] = []
-    seen: set[str] = set()
+    seen_keys: set[str] = set()
     for s in syms:
-        u = str(s).upper().strip()
-        if u and u not in seen:
-            seen.add(u)
-            out.append(u)
+        original = str(s).strip()
+        if not original:
+            continue
+        key = original.upper()
+        if key not in seen_keys:
+            seen_keys.add(key)
+            out.append(original)
     return tuple(out)
 
 

@@ -185,6 +185,38 @@ def test_calendar_overlay_skips_earnings_for_non_index() -> None:
     )
 
 
+def test_calendar_overlay_skips_earnings_for_commodity_cfds() -> None:
+    """USOIL/UKOIL appear in ``_INDEX_TO_CURRENCIES`` for currency-event
+    dispatch but are not stock indices — constituent earnings (MSFT, AAPL...)
+    don't move oil prices, so they must not attach. Regression guard for the
+    smoke-test bug where USOIL got 4 spurious earnings entries."""
+    now = datetime(2026, 4, 29, 21, 0, tzinfo=timezone.utc)
+    earnings = [
+        CalixEarningsEntry(symbol="MSFT", scheduled_date="2026-04-29", timing="amc"),
+        CalixEarningsEntry(symbol="AAPL", scheduled_date="2026-04-29", timing="amc"),
+    ]
+    result = build(_input(
+        watchlist=("USOIL", "UKOIL", "NAS100"),
+        symbol_meta={
+            "USOIL": _meta("USOIL", base="USOIL", profit="USD", category="commodities"),
+            "UKOIL": _meta("UKOIL", base="UKOIL", profit="USD", category="commodities"),
+            "NAS100": _meta("NAS100", base="NAS100", profit="USD", category="indices"),
+        },
+        earnings_entries=earnings,
+        now=now,
+    ))
+    for commodity in ("USOIL", "UKOIL"):
+        assert not any(
+            i.kind == "earnings"
+            for i in result.calendar_by_symbol.get(commodity, [])
+        ), f"{commodity} should not get earnings"
+    # NAS100 (a stock index) is the only one that should pick them up.
+    assert any(
+        i.kind == "earnings"
+        for i in result.calendar_by_symbol.get("NAS100", [])
+    )
+
+
 # ---------- News by symbol -------------------------------------------------
 
 
@@ -333,6 +365,30 @@ def test_swing_skipped_when_bars_insufficient() -> None:
     ))
     assert result.swing_candidates == []
     assert "INDICATOR_DATA_INSUFFICIENT" in result.flags
+
+
+def test_missing_meta_or_bars_does_not_flag_indicator_insufficient() -> None:
+    """If the orchestrator simply didn't supply meta/bars for a watchlist
+    symbol, that's a watchlist-resolution gap — not a "bars too short"
+    indicator-math problem. Surface it as a note, not as the data-quality
+    flag. Regression guard for the smoke-test bug where spurious
+    calendar-tier symbols (no bars) tripped the flag globally even though
+    the genuinely-watched symbols had >= 21 bars."""
+    bars = _bar_series("UKOIL", [str(80 + i) for i in range(25)])
+    result = build(_input(
+        watchlist=("UKOIL", "PHANTOM"),
+        symbol_meta={
+            "UKOIL": _meta(
+                "UKOIL", base="UKOIL", profit="USD", category="commodities",
+                swap_long="125", swap_short="-150",
+            ),
+            # PHANTOM has no meta/bars in the bundle.
+        },
+        bars_by_symbol={"UKOIL": bars},
+    ))
+    assert "INDICATOR_DATA_INSUFFICIENT" not in result.flags
+    # The phantom symbol still gets a note so the user sees the gap.
+    assert any("PHANTOM" in n for n in result.notes)
 
 
 # ---------- Health ---------------------------------------------------------

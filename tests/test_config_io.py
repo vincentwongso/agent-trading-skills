@@ -38,6 +38,21 @@ def test_default_config_matches_user_stated_defaults() -> None:
 def test_load_missing_file_returns_defaults(tmp_path: Path) -> None:
     cfg = load_config(tmp_path / "absent.toml")
     assert cfg == default_config()
+    # Default mode does NOT write — keeps tests / one-shot reads side-effect-free.
+    assert not (tmp_path / "absent.toml").exists()
+
+
+def test_load_missing_file_with_auto_write_persists_defaults(tmp_path: Path) -> None:
+    """The CLIs opt into auto-write so the user has a file to customize.
+    Regression guard for the smoke-test bug where ``~/.cfd-skills/config.toml``
+    was never created on first invocation."""
+    target = tmp_path / "subdir" / "config.toml"  # parent dir absent too
+    cfg = load_config(target, write_default_if_missing=True)
+    assert cfg == default_config()
+    assert target.exists()
+    # And the written file round-trips cleanly.
+    reloaded = load_config(target)
+    assert reloaded == default_config()
 
 
 def test_round_trip_default_config(tmp_path: Path) -> None:

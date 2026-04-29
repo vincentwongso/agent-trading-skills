@@ -6,13 +6,13 @@ The canonical design is `cfd-trading-skills-plan.md` — read it before making a
 
 ## Status (last updated 2026-04-29)
 
-Two of four skills shipped on `main`:
+Three of four skill bundles shipped on `main`:
 - ✅ `cfd-position-sizer` — lot sizing + margin cross-check + swap-aware output
 - ✅ `trade-journal` — append-only JSONL with R-multiple, swap-only P&L, swing-trade lens
-- ⏳ `daily-risk-guardian` + `pre-trade-checklist` (paired, plan estimate 5–7h)
+- ✅ `daily-risk-guardian` + `pre-trade-checklist` (paired) — NY-close session reset, LLM-judged AT_RISK predicate, Calix proximity, EWMA spread baseline
 - ⏳ `session-news-brief` (plan estimate 8–12h)
 
-137 pytest cases passing in ~0.5s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`.
+261 pytest cases passing in ~0.7s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`.
 
 ## Architecture in one paragraph
 
@@ -31,16 +31,27 @@ src/cfd_skills/        # pure-Python, Decimal-typed, no I/O at the package bound
   position_sizer.py    # skill 1 orchestrator
   journal_io.py        # skill 2 schema-versioned write/read with strict validation
   journal_stats.py     # skill 2 analytics
-  cli/{size,journal}.py
+  config_io.py         # skill 3 ~/.cfd-skills/config.toml read/write + defaults
+  daily_state.py       # skill 3 NY 4pm ET reset bookkeeping (zoneinfo, DST-safe)
+  risk_state.py        # skill 3 Position dataclass + AT_RISK / RISK_FREE / LOCKED_PROFIT
+  guardian.py          # skill 3 daily-risk-guardian orchestrator (CLEAR/CAUTION/HALT)
+  calix_client.py      # skill 3 Calix HTTPS client w/ 60s on-disk cache
+  spread_baseline.py   # skill 3 EWMA per-symbol spread baseline
+  checklist.py         # skill 3 pre-trade-checklist orchestrator (PASS/WARN/BLOCK)
+  cli/{size,journal,guardian,checklist}.py
 .claude/skills/
   cfd-position-sizer/SKILL.md + scripts/size.py
   trade-journal/SKILL.md + scripts/journal.py
+  daily-risk-guardian/SKILL.md + scripts/guardian.py
+  pre-trade-checklist/SKILL.md + scripts/checklist.py
 tests/                 # pytest, no live broker required
 ~/.cfd-skills/         # runtime files (not committed):
   journal.jsonl        # trade journal
-  config.toml          # first-run setup will write this (skill 3)
-  daily_state.json     # NY-close session bookkeeping (skill 3)
-  news_cache/          # 60s on-disk cache (skill 4)
+  config.toml          # config; auto-defaults if missing
+  daily_state.json     # NY-close session bookkeeping
+  spread_baseline.json # EWMA per-symbol spread baselines
+  calix_cache/         # 60s on-disk Calix cache
+  news_cache/          # skill 4 (not yet built)
 ```
 
 ## Quick commands
@@ -58,6 +69,10 @@ echo '<bundle>' | python -m cfd_skills.cli.size
 # Smoke-test journal
 echo '<entry>' | cfd-skills-journal write --json
 cfd-skills-journal stats --group-by all
+
+# Smoke-test guardian + checklist
+echo '<bundle>' | cfd-skills-guardian
+echo '<bundle>' | cfd-skills-checklist
 ```
 
 ## Conventions to preserve
@@ -71,7 +86,7 @@ cfd-skills-journal stats --group-by all
 
 ## Resuming
 
-Next skill is the paired build of `daily-risk-guardian` + `pre-trade-checklist`. Plan section "Skill 2 — daily-risk-guardian + pre-trade-checklist (paired build)" in `cfd-trading-skills-plan.md` covers the full design including the LLM-judged risk-free predicate, NY 4pm ET reset (Vincent is in AEST → 6am AEST), risk-budget cap (sum of per-position %, not hard count), and Calix integration for news-proximity check.
+Next skill is `session-news-brief` (skill 4). Plan section "Skill 4 — session-news-brief" in `cfd-trading-skills-plan.md` covers the design: Calix calendar+earnings + 3-API news fan-out (Finnhub / Marketaux / ForexNews) + ATR/RSI swing-candidates section + dynamic 5-tier watchlist resolver. Estimated 8–12h.
 
 User's stated trading defaults (locked in 2026-04-29; see memory `project_user_trading_setup.md`):
 - 1% per-trade max, 5% daily cap, 50% caution threshold

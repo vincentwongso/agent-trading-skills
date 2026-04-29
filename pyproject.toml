@@ -18,6 +18,7 @@ dev = [
 
 [project.scripts]
 cfd-skills-size = "cfd_skills.cli.size:main"
+cfd-skills-journal = "cfd_skills.cli.journal:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,0 +1,248 @@
+"""CLI for the trade journal — write / update / query / stats / tags.
+
+Subcommand entrypoint::
+
+    cfd-skills-journal <subcommand> [--journal-path PATH] [...]
+
+``write`` and ``update`` consume a JSON bundle on stdin (or via ``-i FILE``).
+The other subcommands print JSON to stdout for the agent to render.
+
+Default journal path: ``~/.cfd-skills/journal.jsonl``. The skill's bash
+invocation can override with ``--journal-path``; tests use ``tmp_path``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Optional
+
+from cfd_skills.journal_io import (
+    SchemaError,
+    filter_resolved,
+    read_resolved,
+    suggest_tags,
+    write_open,
+    write_update,
+)
+from cfd_skills.journal_stats import (
+    Summary,
+    by_risk_classification,
+    by_setup_type,
+    by_side,
+    by_symbol,
+    compute_summary,
+    swing_subset,
+)
+
+
+DEFAULT_PATH = Path("~/.cfd-skills/journal.jsonl")
+
+
+# --- helpers ---------------------------------------------------------------
+
+
+def _to_jsonable(obj: Any) -> Any:
+    if isinstance(obj, Decimal):
+        return format(obj, "f")
+    if isinstance(obj, Summary):
+        return obj.to_dict()
+    if isinstance(obj, dict):
+        return {k: _to_jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_jsonable(v) for v in obj]
+    return obj
+
+
+def _resolve_period(period: str | None) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Map a shorthand period to (since, until) UTC datetimes."""
+    if period is None or period == "all":
+        return None, None
+    now = datetime.now(timezone.utc)
+    if period == "today":
+        # 00:00 UTC of today.
+        since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "week":
+        since = now - timedelta(days=7)
+    elif period == "month":
+        since = now - timedelta(days=30)
+    else:
+        raise SchemaError(f"unknown period {period!r}; use today|week|month|all")
+    return since, now
+
+
+def _add_filter_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--period", choices=["today", "week", "month", "all"], default=None)
+    p.add_argument("--since", help="ISO 8601 (overrides --period start)")
+    p.add_argument("--until", help="ISO 8601 (overrides --period end)")
+    p.add_argument("--symbol")
+    p.add_argument("--setup-type")
+    p.add_argument("--side", choices=["buy", "sell"])
+    p.add_argument("--risk-classification", choices=["AT_RISK", "RISK_FREE", "LOCKED_PROFIT"])
+
+
+def _apply_filter_args(entries: list[dict], args: argparse.Namespace) -> list[dict]:
+    since, until = _resolve_period(args.period)
+    if args.since:
+        since = datetime.fromisoformat(args.since)
+    if args.until:
+        until = datetime.fromisoformat(args.until)
+    return filter_resolved(
+        entries,
+        since=since, until=until,
+        symbol=args.symbol,
+        setup_type=args.setup_type,
+        side=args.side,
+        risk_classification=args.risk_classification,
+    )
+
+
+def _read_stdin_or_file(path: str) -> str:
+    return sys.stdin.read() if path == "-" else open(path, encoding="utf-8").read()
+
+
+# --- subcommands -----------------------------------------------------------
+
+
+def cmd_write(args: argparse.Namespace) -> int:
+    raw = _read_stdin_or_file(args.input)
+    try:
+        bundle = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: invalid JSON: {exc}", file=sys.stderr)
+        return 1
+    try:
+        uid = write_open(args.journal_path, **bundle)
+    except (TypeError, SchemaError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        json.dump({"uuid": uid}, sys.stdout)
+        sys.stdout.write("\n")
+    else:
+        print(f"Wrote entry {uid} to {args.journal_path}")
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    raw = _read_stdin_or_file(args.input)
+    try:
+        bundle = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: invalid JSON: {exc}", file=sys.stderr)
+        return 1
+    if "uuid" not in bundle:
+        print("ERROR: 'uuid' is required for update", file=sys.stderr)
+        return 1
+    try:
+        write_update(args.journal_path, **bundle)
+    except (TypeError, SchemaError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        json.dump({"uuid": bundle["uuid"], "updated": True}, sys.stdout)
+        sys.stdout.write("\n")
+    else:
+        print(f"Patched entry {bundle['uuid']}")
+    return 0
+
+
+def cmd_query(args: argparse.Namespace) -> int:
+    entries = read_resolved(args.journal_path)
+    filtered = _apply_filter_args(entries, args)
+    if args.swing_only:
+        filtered = swing_subset(filtered)
+    json.dump({"count": len(filtered), "entries": filtered}, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    entries = read_resolved(args.journal_path)
+    filtered = _apply_filter_args(entries, args)
+    if args.swing_only:
+        filtered = swing_subset(filtered)
+
+    payload: dict[str, Any] = {
+        "count": len(filtered),
+        "summary": compute_summary(filtered).to_dict(),
+    }
+    if args.group_by in ("setup_type", "all"):
+        payload["by_setup_type"] = {k: v.to_dict() for k, v in by_setup_type(filtered).items()}
+    if args.group_by in ("symbol", "all"):
+        payload["by_symbol"] = {k: v.to_dict() for k, v in by_symbol(filtered).items()}
+    if args.group_by in ("side", "all"):
+        payload["by_side"] = {k: v.to_dict() for k, v in by_side(filtered).items()}
+    if args.group_by in ("risk_classification", "all"):
+        payload["by_risk_classification"] = {
+            k: v.to_dict() for k, v in by_risk_classification(filtered).items()
+        }
+    json.dump(payload, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+def cmd_tags(args: argparse.Namespace) -> int:
+    tags = suggest_tags(args.journal_path)
+    json.dump({"tags": [{"setup_type": t, "count": c} for t, c in tags]}, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
+# --- entry point ----------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="cfd-skills-journal")
+    parser.add_argument(
+        "--journal-path",
+        type=lambda s: Path(s).expanduser(),
+        default=DEFAULT_PATH.expanduser(),
+        help="Path to journal.jsonl (default: ~/.cfd-skills/journal.jsonl)",
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_write = sub.add_parser("write", help="Append a new open entry from JSON stdin/file")
+    p_write.add_argument("--input", "-i", default="-")
+    p_write.add_argument("--json", action="store_true", help="Emit JSON instead of human text")
+    p_write.set_defaults(func=cmd_write)
+
+    p_update = sub.add_parser("update", help="Append a patch to an existing entry by uuid")
+    p_update.add_argument("--input", "-i", default="-")
+    p_update.add_argument("--json", action="store_true")
+    p_update.set_defaults(func=cmd_update)
+
+    p_query = sub.add_parser("query", help="List filtered entries as JSON")
+    _add_filter_args(p_query)
+    p_query.add_argument("--swing-only", action="store_true",
+                         help="Restrict to carry-driven trades (see journal_stats.swing_subset)")
+    p_query.set_defaults(func=cmd_query)
+
+    p_stats = sub.add_parser("stats", help="Summary stats over filtered entries")
+    _add_filter_args(p_stats)
+    p_stats.add_argument(
+        "--group-by",
+        choices=["setup_type", "symbol", "side", "risk_classification", "all"],
+        default=None,
+    )
+    p_stats.add_argument("--swing-only", action="store_true")
+    p_stats.set_defaults(func=cmd_stats)
+
+    p_tags = sub.add_parser("tags", help="List existing setup_type tags by frequency")
+    p_tags.set_defaults(func=cmd_tags)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

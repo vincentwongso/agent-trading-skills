@@ -76,12 +76,14 @@ def _bundle(tmp_path: Path, **overrides) -> dict:
     return base
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, bundle: dict) -> tuple[int, dict, str]:
+def _run(
+    monkeypatch: pytest.MonkeyPatch, bundle: dict, argv: list[str] | None = None,
+) -> tuple[int, dict, str]:
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(bundle)))
     out = io.StringIO()
     err = io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
-        rc = main([])
+        rc = main(argv if argv is not None else [])
     return rc, json.loads(out.getvalue() or "{}"), err.getvalue()
 
 
@@ -191,6 +193,34 @@ def test_calix_stale_flagged(
     rc, result, _ = _run(monkeypatch, bundle)
     assert rc == 0
     assert "CALIX_DEGRADED" in result["flags"]
+
+
+# ---------- .env loading --------------------------------------------------
+
+
+def test_env_file_flag_loads_keys_into_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Make sure the keys are unset, then pass --env-file to a temp file that
+    # sets one. After main() runs, os.environ should reflect the loaded value.
+    # Note: the loader mutates os.environ via setdefault, which bypasses
+    # monkeypatch's restore tracking — so we save+restore manually to keep
+    # this test from leaking into the news_clients tests below.
+    import os
+    keys = ("FINNHUB_API_KEY", "MARKETAUX_API_KEY", "FOREXNEWS_API_KEY")
+    saved = {k: os.environ.pop(k, None) for k in keys}
+    try:
+        env_path = tmp_path / "test.env"
+        env_path.write_text("FINNHUB_API_KEY=loaded-from-dotenv\n", encoding="utf-8")
+        bundle = _bundle(tmp_path)
+        rc, _, _ = _run(monkeypatch, bundle, argv=["--env-file", str(env_path)])
+        assert rc == 0
+        assert os.environ.get("FINNHUB_API_KEY") == "loaded-from-dotenv"
+    finally:
+        for k in keys:
+            os.environ.pop(k, None)
+            if saved[k] is not None:
+                os.environ[k] = saved[k]
 
 
 # ---------- error handling -------------------------------------------------

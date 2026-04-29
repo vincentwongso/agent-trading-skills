@@ -71,6 +71,7 @@ from typing import Any
 from cfd_skills.checklist import CalixEarningsEntry, CalixEconomicEvent
 from cfd_skills.config_io import DEFAULT_CONFIG_PATH, load_config
 from cfd_skills.decimal_io import D
+from cfd_skills.dotenv_loader import load_env_file
 from cfd_skills.indicators import Bar, bars_from_mcp
 from cfd_skills.news_brief import (
     DEFAULT_CALENDAR_LOOKAHEAD_HOURS,
@@ -191,7 +192,24 @@ def main(argv: list[str] | None = None) -> int:
         "--input", "-i", default="-",
         help="Path to JSON input file ('-' for stdin; default: -).",
     )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help=(
+            "Optional path to a .env file with FINNHUB_API_KEY / "
+            "MARKETAUX_API_KEY / FOREXNEWS_API_KEY. Defaults to "
+            "~/.cfd-skills/.env then ./.env in the working directory. "
+            "Real shell env vars always win."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    # Load .env (if present). Real env vars win — load_env_file uses setdefault.
+    if args.env_file is not None:
+        load_env_file(args.env_file)
+    else:
+        for candidate in (Path.home() / ".cfd-skills" / ".env", Path.cwd() / ".env"):
+            load_env_file(candidate)
 
     raw = sys.stdin.read() if args.input == "-" else open(args.input, encoding="utf-8").read()
     try:

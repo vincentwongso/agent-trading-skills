@@ -74,6 +74,14 @@ tests/                 # pytest, no live broker required
 
 A missing key produces a `MISSING_NEWS_API_KEY` flag and that provider is skipped — the brief still runs with the other two.
 
+The news CLI also auto-loads a `.env` file (zero-dep loader, `os.environ.setdefault` so real shell env wins). Search order:
+
+1. `--env-file <path>` if passed explicitly
+2. `~/.cfd-skills/.env` (preferred — survives across project locations)
+3. `./.env` (repo-local override)
+
+`.env.example` at the repo root is committed; `.env` is in `.gitignore`. PowerShell users prefer this over `export` (which is bash-only).
+
 ## Quick commands
 
 ```bash

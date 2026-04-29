@@ -62,6 +62,8 @@ The CLI fetches news itself if the bundle omits the `news` key — this lets the
 
 API keys never live in `config.toml`. A missing key for one provider doesn't block the others — the brief surfaces a `MISSING_NEWS_API_KEY` flag and per-provider health status so the user knows which sources contributed.
 
+The CLI also auto-loads a `.env` file. Search order: `--env-file <path>` if passed → `~/.cfd-skills/.env` → `./.env` (CWD). Real shell env vars always win. `.env.example` at the repo root is the template; `.env` is gitignored. This is the recommended path on Windows / PowerShell, where bash `export` doesn't apply.
+
 If you've already fetched the news upstream (e.g. you ran the providers in parallel via a custom script), pre-fill `news.articles_by_provider` + `news.provider_status` in the bundle to skip the in-CLI fan-out.
 
 ### 4. Build the bundle

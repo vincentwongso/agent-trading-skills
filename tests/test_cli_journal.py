@@ -2,6 +2,8 @@
 
 import io
 import json
+import subprocess
+import sys
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
@@ -206,3 +208,77 @@ def test_tags_returns_frequency_sorted_list(monkeypatch, tmp_path: Path):
     parsed = json.loads(out)
     assert parsed["tags"][0]["setup_type"] == "pullback-long"
     assert parsed["tags"][0]["count"] == 2
+
+
+# --- decision write / write-outcome --------------------------------------
+
+
+def _run_decision_write(path: Path, payload: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "trading_agent_skills.cli.journal",
+         "decision", "write", "--decisions-path", str(path)],
+        input=json.dumps(payload), text=True, capture_output=True,
+    )
+
+
+def test_cli_decision_write_intent(tmp_path: Path) -> None:
+    decisions = tmp_path / "decisions.jsonl"
+    payload = {
+        "kind": "open",
+        "symbol": "XAUUSD.z",
+        "ticket": None,
+        "setup_type": "price_action:pin_bar",
+        "reasoning": "FVG fill at 2380.",
+        "skills_used": ["price-action", "pre-trade-checklist"],
+        "guardian_status": "CLEAR",
+        "checklist_verdict": "PASS",
+        "execution": {
+            "side": "BUY", "volume": "0.05", "entry_price": "2380.00",
+            "sl": "2375.00", "tp": "2390.00",
+        },
+        "charter_version": 1,
+        "tick_id": "2026-04-30T22:00:00Z",
+    }
+    res = _run_decision_write(decisions, payload)
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout)
+    assert out["status"] == "ok"
+    assert decisions.is_file()
+    rec = json.loads(decisions.read_text().splitlines()[0])
+    assert rec["kind"] == "open"
+
+
+def test_cli_decision_write_outcome(tmp_path: Path) -> None:
+    decisions = tmp_path / "decisions.jsonl"
+    # Seed an intent
+    _run_decision_write(decisions, {
+        "kind": "open", "symbol": "X", "ticket": None,
+        "setup_type": "x", "reasoning": "r", "skills_used": [],
+        "guardian_status": "CLEAR", "checklist_verdict": "PASS",
+        "execution": {"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                      "sl": "0.99", "tp": "1.02"},
+        "charter_version": 1, "tick_id": "2026-04-30T22:00:00Z",
+    })
+    # Outcome
+    res = subprocess.run(
+        [sys.executable, "-m", "trading_agent_skills.cli.journal",
+         "decision", "write-outcome", "--decisions-path", str(decisions)],
+        input=json.dumps({
+            "tick_id": "2026-04-30T22:00:00Z",
+            "kind": "open", "symbol": "X",
+            "execution_status": "filled", "ticket": 1234,
+            "actual_fill_price": "1.0001", "failure_reason": None,
+        }),
+        text=True, capture_output=True,
+    )
+    assert res.returncode == 0, res.stderr
+    lines = decisions.read_text().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[1])["execution"]["execution_status"] == "filled"
+
+
+def test_cli_decision_write_invalid_payload_nonzero_exit(tmp_path: Path) -> None:
+    decisions = tmp_path / "decisions.jsonl"
+    res = _run_decision_write(decisions, {"kind": "explode"})  # missing fields too
+    assert res.returncode != 0
+    assert "kind" in res.stderr or "kind" in res.stdout

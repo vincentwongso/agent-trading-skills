@@ -22,6 +22,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
 
+from trading_agent_skills.decision_log import (
+    DecisionSchemaError,
+    write_intent,
+    write_outcome,
+)
 from trading_agent_skills.journal_io import (
     SchemaError,
     filter_resolved,
@@ -194,6 +199,54 @@ def cmd_tags(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- decision log subcommands ---------------------------------------------
+
+
+def _read_decision_payload() -> dict[str, Any]:
+    raw = sys.stdin.read()
+    return json.loads(raw)
+
+
+def cmd_decision_write_intent(args: argparse.Namespace) -> int:
+    try:
+        payload = _read_decision_payload()
+    except json.JSONDecodeError as exc:
+        print(json.dumps({"status": "error", "error": f"invalid JSON: {exc}"}),
+              file=sys.stderr)
+        return 2
+    try:
+        rec = write_intent(args.decisions_path, **payload)
+    except (DecisionSchemaError, TypeError, KeyError) as exc:
+        print(json.dumps({
+            "status": "error",
+            "error": str(exc),
+            "kind": payload.get("kind") if isinstance(payload, dict) else None,
+        }), file=sys.stderr)
+        return 2
+    print(json.dumps({"status": "ok", "record": rec}))
+    return 0
+
+
+def cmd_decision_write_outcome(args: argparse.Namespace) -> int:
+    try:
+        payload = _read_decision_payload()
+    except json.JSONDecodeError as exc:
+        print(json.dumps({"status": "error", "error": f"invalid JSON: {exc}"}),
+              file=sys.stderr)
+        return 2
+    try:
+        rec = write_outcome(args.decisions_path, **payload)
+    except (DecisionSchemaError, TypeError, KeyError) as exc:
+        print(json.dumps({
+            "status": "error",
+            "error": str(exc),
+            "kind": payload.get("kind") if isinstance(payload, dict) else None,
+        }), file=sys.stderr)
+        return 2
+    print(json.dumps({"status": "ok", "record": rec}))
+    return 0
+
+
 # --- entry point ----------------------------------------------------------
 
 
@@ -235,6 +288,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_tags = sub.add_parser("tags", help="List existing setup_type tags by frequency")
     p_tags.set_defaults(func=cmd_tags)
+
+    # decision log: nested subcommand `decision {write,write-outcome}`.
+    # Uses --decisions-path (separate from --journal-path) because the
+    # autonomous-loop decision log lives in a different file.
+    p_decision = sub.add_parser(
+        "decision", help="Decision log read/write (autonomous mode)."
+    )
+    decision_sub = p_decision.add_subparsers(dest="decision_action", required=True)
+
+    p_dec_write = decision_sub.add_parser(
+        "write", help="Append a decision-intent record from JSON stdin."
+    )
+    p_dec_write.add_argument(
+        "--decisions-path",
+        type=lambda s: Path(s).expanduser(),
+        required=True,
+    )
+    p_dec_write.set_defaults(func=cmd_decision_write_intent)
+
+    p_dec_outcome = decision_sub.add_parser(
+        "write-outcome", help="Append an outcome record from JSON stdin."
+    )
+    p_dec_outcome.add_argument(
+        "--decisions-path",
+        type=lambda s: Path(s).expanduser(),
+        required=True,
+    )
+    p_dec_outcome.set_defaults(func=cmd_decision_write_outcome)
 
     return parser
 

@@ -4,7 +4,9 @@
 
 Reasoning-layer agent skills for day trading on top of [`mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) (live MetaTrader 5 access) and [Calix](https://calix.fintrixmarkets.com) (economic + earnings calendar).
 
-Six skills, all read-only / advisory — none of them mutate broker state. Execution stays behind your existing `mt5-trading` consent flow.
+Eight skills total — six advisory (read-only — never mutate broker state) plus two for the optional autonomous-trading loop. The autonomous loop is **opt-in** and **demo-only by default**.
+
+**Advisory** (read-only — execution stays behind your existing `mt5-trading` consent flow):
 
 | # | Skill | What it does |
 |---|---|---|
@@ -15,7 +17,14 @@ Six skills, all read-only / advisory — none of them mutate broker state. Execu
 | 5 | **`session-news-brief`** | Dynamic watchlist + Calix overlay + 3-API news fan-out (Finnhub / Marketaux / ForexNews) + swing candidates. |
 | 6 | **`price-action`** | Hybrid classical + ICT structural reader. 9 setup detectors; ranked candidates hand off to `pre-trade-checklist` + `position-sizer`. |
 
-See [`trading-agent-skills-plan.md`](trading-agent-skills-plan.md) for the original design and [`docs/superpowers/specs/`](docs/superpowers/specs/) for per-skill specs.
+**Autonomous (opt-in, demo-only by default — see [§5](#5-autonomous-trading-mode-optional)):**
+
+| # | Skill | What it does |
+|---|---|---|
+| 7 | **`trading-heartbeat`** | One autonomous trading tick on a configured demo account. Composes the six advisory skills + `mt5-mcp` execution. Enforces the operating charter (per-trade risk cap, daily loss cap, max concurrent positions). Logs every action and every evaluated-but-skipped candidate to a per-account decision log with reasoning. |
+| 8 | **`strategy-review`** | Weekly retrospective. Reads journal + decision log, generates a markdown proposal, asks the user to approve charter changes. Cannot propose mode changes (demo↔live). |
+
+See [`trading-agent-skills-plan.md`](trading-agent-skills-plan.md) for the original design, [`docs/superpowers/specs/`](docs/superpowers/specs/) for per-skill specs, and [`FUTURE.md`](FUTURE.md) for tracked v2 follow-ups.
 
 ---
 
@@ -36,6 +45,8 @@ Per-skill extras:
 | `pre-trade-checklist` | ✅ required | ✅ required | — |
 | `session-news-brief` | ✅ required (positions / rates / symbols) | ✅ required | ✅ at least one of three |
 | `price-action` | ✅ required | — | — |
+| `trading-heartbeat` | ✅ required (also calls `place_order` / `close_position` / `modify_order`) | ✅ required (composes checklist) | optional (composes news brief) |
+| `strategy-review` | — (reads local journal + decision log only) | — | — |
 
 `mt5-mcp` is a separate project — install it independently; this repo only consumes its tool outputs as JSON. See [`vincentwongso/mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) for setup. The skills here are deliberately decoupled: the agent fans out MCP calls, bundles the results, and pipes them into a local CLI. No Python code in this repo imports an MCP client.
 
@@ -52,19 +63,22 @@ python -m venv .venv
 # source .venv/bin/activate    # macOS / Linux
 
 pip install -e ".[dev]"
-pytest                         # ~440 tests, ~1s — confirms the install works
+pytest                         # ~550 tests, ~3s — confirms the install works
 ```
 
-This registers six CLI entry points on `PATH`:
+This registers seven CLI entry points on `PATH`:
 
 | Skill | Entry point |
 |---|---|
 | `position-sizer` | `trading-agent-skills-size` |
-| `trade-journal` | `trading-agent-skills-journal` |
+| `trade-journal` (incl. `decision write` / `decision read` subcommands) | `trading-agent-skills-journal` |
 | `daily-risk-guardian` | `trading-agent-skills-guardian` |
 | `pre-trade-checklist` | `trading-agent-skills-checklist` |
 | `session-news-brief` | `trading-agent-skills-news` |
 | `price-action` | `trading-agent-skills-price-action` |
+| `strategy-review` | `trading-agent-skills-strategy-review` |
+
+(`trading-heartbeat` has no Python entry point — it's pure orchestration markdown that calls the six advisory CLIs above plus `mt5-mcp` execution tools. See [§5](#5-autonomous-trading-mode-optional).)
 
 Each CLI reads a JSON bundle from stdin (or `--input <file>`) and writes JSON to stdout. The skill `SKILL.md` files document the bundle shape per skill.
 
@@ -249,13 +263,20 @@ All skills write to `~/.trading-agent-skills/` (created on first run):
 
 ```
 ~/.trading-agent-skills/
-  journal.jsonl        # trade journal — append-only
+  journal.jsonl        # trade journal — append-only (manual / advisory mode)
   config.toml          # config; auto-defaults if missing
-  daily_state.json     # NY-close session bookkeeping (guardian)
+  daily_state.json     # NY-close session bookkeeping (guardian, advisory mode)
   spread_baseline.json # EWMA per-symbol spread baselines (checklist)
   calix_cache/         # 60s on-disk Calix cache
   news_cache/          # 60s on-disk news cache
   .env                 # optional, news API keys
+  accounts/<id>/       # autonomous-mode state (one dir per MT5 account)
+    charter.md         # operating envelope (mode/heartbeat/risk caps)
+    charter_versions/  # archived prior charter versions
+    decisions.jsonl    # autonomous decision log (intent + outcome)
+    proposals/         # weekly strategy-review proposals
+    journal.jsonl      # per-account journal (when --account-id is used)
+    daily_state.json   # per-account session bookkeeping
 ```
 
 None of these are committed to the repo.
@@ -276,6 +297,58 @@ Once installed, talk to your agent in plain English. With Claude Code:
 ```
 
 The agent should match each phrase to a skill, fan out the relevant `mcp__mt5-mcp__*` calls, pipe the JSON bundle to the matching `trading-agent-skills-*` CLI, and render the result.
+
+---
+
+## 5. Autonomous trading mode (optional)
+
+Skills 7 (`trading-heartbeat`) and 8 (`strategy-review`) compose the six advisory skills into a hands-off trading loop on a configured **demo** account. The mental model: "I've set up a demo account — go trade it. Tell me what you did and why. Every Sunday we'll review and tweak the rules."
+
+**This is opt-in. Charter starts in `mode: demo`. Switching to `mode: live` is a manual, user-initiated step (see [`AGENTS.md` §Demo→live runbook](AGENTS.md)).**
+
+### How it works
+
+- The harness fires `/trading-heartbeat` on a recurring schedule (15m / 1h / 4h depending on your trading style). Each tick reads the operating charter, checks kill conditions (guardian HALT, market closed, broker unreachable), manages open positions, and scans for new entries.
+- Every action AND every evaluated-but-skipped candidate is logged to `~/.trading-agent-skills/accounts/<id>/decisions.jsonl` with reasoning. The intent record is written **before** any broker call so a crash mid-flight still leaves an audit trail.
+- Once a week, `/strategy-review` reads journal + decision log, generates a markdown proposal at `~/.trading-agent-skills/accounts/<id>/proposals/<date>.md`, and asks you to approve charter changes. Charter never changes without your explicit approval.
+
+### Hard rules enforced by the system
+
+- Per-trade risk cap (% of equity), daily loss cap, max concurrent positions — sourced from the charter, refused if exceeded.
+- Mode flip (`demo` → `live`) cannot be proposed by `strategy-review`. Only the user can initiate it.
+- Charter changes are version-archived; every accepted proposal bumps `charter_version` and the prior version is preserved at `charter_versions/v<N>.md`.
+
+### Setup
+
+The full Q&A walk-through lives in [`AGENTS.md`](AGENTS.md) under "Setting up autonomous trading". Trigger it with any of:
+
+- "set up autonomous trading"
+- "configure the trading agent"
+- "I want the agent to trade my demo account"
+
+The agent will ask the hard fields (account_id, trading style, heartbeat cadence, per-trade risk cap, daily loss cap, max concurrent positions), optionally prompt for soft constraints (instruments, sessions, allowed setups), and write the charter to `~/.trading-agent-skills/accounts/<account_id>/charter.md`.
+
+### Triggering the heartbeat
+
+| Harness | Cadence trigger |
+|---|---|
+| Claude Code | `/loop <heartbeat> /trading-heartbeat` (e.g. `/loop 1h /trading-heartbeat`) |
+| OpenClaw | internal cron entry pointing to `trading-heartbeat` |
+| Hermes | heartbeat-system entry pointing to `trading-heartbeat` |
+
+The same SKILL.md works across all three; the trigger mechanism differs by harness.
+
+### Cost guidance
+
+Approximate per-tick LLM cost on Haiku 4.5 (recommended for heartbeat ticks):
+
+| Style | Heartbeat | Ticks/week | Heartbeat cost | + weekly review (Opus) | Total/week |
+|---|---:|---:|---:|---:|---:|
+| swing | 4h | ~10 | $0.30–1.00 | $1–3 | $1–4 |
+| day | 1h | ~40 | $1–4 | $1–3 | $2–7 |
+| scalp | 15m | ~160 | $5–16 | $1–3 | $6–19 |
+
+Use Haiku for heartbeat ticks (cheap, mostly orchestration + tool calls); Opus for the weekly strategy-review (only fires once/week, deserves the better model for pattern recognition).
 
 ---
 
@@ -302,9 +375,13 @@ src/trading_agent_skills/        # pure-Python helpers, Decimal-typed, no I/O at
   watchlist.py         # skill 4 5-tier resolver (explicit / positions / calendar / vol / default)
   news_clients.py      # skill 4 Finnhub / Marketaux / ForexNews httpx clients
   news_brief.py        # skill 4 session-news-brief orchestrator
-  price_action/        # skill 5 sub-package (bars, pivots, structure, fvg, order_block,
+  price_action/        # skill 6 sub-package (bars, pivots, structure, fvg, order_block,
                        #   liquidity, context, scoring, schema, scan, detectors/)
-  cli/{size,journal,guardian,checklist,news,price_action}.py
+  account_paths.py     # autonomous mode: per-account state path resolver
+  charter_io.py        # autonomous mode: operating charter parse/validate/write/archive
+  decision_log.py      # autonomous mode: decisions.jsonl intent/outcome with reconciliation
+  strategy_review.py   # skill 8 weekly performance + charter proposal generator
+  cli/{size,journal,guardian,checklist,news,price_action,strategy_review}.py
 .claude/skills/        # one folder per skill (SKILL.md + thin scripts/ entry points)
   position-sizer/SKILL.md
   trade-journal/SKILL.md
@@ -312,7 +389,9 @@ src/trading_agent_skills/        # pure-Python helpers, Decimal-typed, no I/O at
   pre-trade-checklist/SKILL.md
   session-news-brief/SKILL.md
   price-action/SKILL.md
-tests/                 # pytest, no live broker required (~440+ cases)
+  trading-heartbeat/SKILL.md   # autonomous tick orchestrator (markdown only)
+  strategy-review/SKILL.md     # weekly retrospective + charter tuning
+tests/                 # pytest, no live broker required (~550+ cases)
 ```
 
 ---

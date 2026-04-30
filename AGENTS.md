@@ -51,7 +51,7 @@ Pick one approach, in order of preference:
 pipx install -e $REPO
 ```
 
-Verify all six entry points are on PATH:
+Verify all seven entry points are on PATH:
 
 ```bash
 trading-agent-skills-size --help
@@ -60,6 +60,7 @@ trading-agent-skills-guardian --help
 trading-agent-skills-checklist --help
 trading-agent-skills-news --help
 trading-agent-skills-price-action --help
+trading-agent-skills-strategy-review --help
 ```
 
 If any are missing, fall through to 2b.
@@ -72,7 +73,7 @@ python -m venv .venv
 .venv/Scripts/activate          # Windows
 # source .venv/bin/activate     # macOS / Linux
 pip install -e ".[dev]"
-pytest                          # ~440 tests, ~1s — confirms install works
+pytest                          # ~550 tests, ~3s — confirms install works
 ```
 
 ⚠ With venv, the harness's shell must have the venv on PATH every time the skills run. If the user runs the harness from a different shell, the entry points won't resolve. **Tell the user this explicitly** and recommend `pipx` if they hit it.
@@ -103,7 +104,7 @@ Get-ChildItem $src -Directory | ForEach-Object {
 }
 ```
 
-Verify by reloading the harness — the six skills should appear in the available-skills list.
+Verify by reloading the harness — all eight skills should appear in the available-skills list (6 advisory + `trading-heartbeat` + `strategy-review`).
 
 ### OpenClaw
 
@@ -136,6 +137,8 @@ hermes skills install vincentwongso/agent-trading-skills/.claude/skills/daily-ri
 hermes skills install vincentwongso/agent-trading-skills/.claude/skills/pre-trade-checklist
 hermes skills install vincentwongso/agent-trading-skills/.claude/skills/session-news-brief
 hermes skills install vincentwongso/agent-trading-skills/.claude/skills/price-action
+hermes skills install vincentwongso/agent-trading-skills/.claude/skills/trading-heartbeat
+hermes skills install vincentwongso/agent-trading-skills/.claude/skills/strategy-review
 ```
 
 For a dev setup that tracks `git pull`, symlink instead:
@@ -162,7 +165,7 @@ Verify with `hermes skills list`.
 
 ## Step 4 — Check `mt5-mcp` is set up
 
-Five of the six skills need `mt5-mcp` (only `trade-journal` works fully without it). Try:
+Six of the eight skills need `mt5-mcp` — only `trade-journal` and `strategy-review` work fully without it (both are local-file readers). Try:
 
 ```
 mcp__mt5-mcp__ping
@@ -170,7 +173,7 @@ mcp__mt5-mcp__ping
 
 If the tool isn't available or returns an error, the user hasn't set up `mt5-mcp` yet. Tell them:
 
-> "Five of the six skills (everything except `trade-journal`) need the `mt5-mcp` server connected to your MetaTrader 5 terminal. Install it from https://github.com/vincentwongso/mt5-mcp and register it with your harness's MCP config. I can continue installing the skills now — they'll work once mt5-mcp is up."
+> "Most skills need the `mt5-mcp` server connected to your MetaTrader 5 terminal. Install it from https://github.com/vincentwongso/mt5-mcp and register it with your harness's MCP config. I can continue installing the skills now — they'll work once mt5-mcp is up. The `trading-heartbeat` skill in particular cannot run any ticks until mt5-mcp is connected (it needs `place_order` / `close_position` / `modify_order` for execution)."
 
 Don't block install on this — the skills install fine without mt5-mcp, they just can't fetch live broker data until it's connected.
 
@@ -230,6 +233,8 @@ Once the harness has reloaded the skills, run a smoke test by talking to the use
 | `pre-trade-checklist` | "Pre-trade check for XAUUSD long." |
 | `session-news-brief` | "Morning brief." |
 | `price-action` | "What's the setup on XAUUSD?" |
+| `trading-heartbeat` | Don't smoke-test this with a normal prompt — it's the autonomous loop. Verify just that the skill is registered (appears in available-skills list with the trigger description). The user runs the loop via `/loop <heartbeat> /trading-heartbeat` after setting up the charter (see "Setting up autonomous trading" below). |
+| `strategy-review` | "Weekly review for the trading agent." Without an active charter the skill will report no account context — that's success at the registration level. |
 
 If a skill returns a `command not found` error, the Python entry point isn't on PATH for the harness's shell — go back to step 2.
 
@@ -241,9 +246,11 @@ If a skill returns an MCP error like "tool not available", `mt5-mcp` isn't conne
 
 Tell the user:
 
-> "Trading skills installed. The full setup (keys, config, mt5-mcp) is documented in [README.md](README.md) if you want to read it later, but you don't need to — each skill will guide you through any missing config the first time you use it."
+> "Trading skills installed. The full setup (keys, config, mt5-mcp) is documented in [README.md](README.md) if you want to read it later, but you don't need to — each skill will guide you through any missing config the first time you use it. If you want the agent to trade a demo account autonomously on a heartbeat schedule, just say *'set up autonomous trading'* and I'll walk you through it."
 
 Don't dump documentation links unprompted. The user came to you to avoid reading docs.
+
+The autonomous-trading-loop install (charter Q&A + heartbeat trigger) is in the "Setting up autonomous trading" section below, fired only when the user explicitly opts in.
 
 ---
 

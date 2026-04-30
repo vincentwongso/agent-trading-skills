@@ -200,3 +200,23 @@ def test_tick_persists_decimal_without_scientific_notation(tmp_path: Path) -> No
     raw = target.read_text(encoding="utf-8")
     assert "0.00012345" in raw
     assert "E-" not in raw and "e-" not in raw
+
+
+# ---------- default_daily_state_path ---------------------------------------
+
+
+from trading_agent_skills.daily_state import default_daily_state_path
+
+
+def test_default_daily_state_path_with_account_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    p = default_daily_state_path(account_id="12345678")
+    assert p == tmp_path / ".trading-agent-skills" / "accounts" / "12345678" / "daily_state.json"
+
+
+def test_default_daily_state_path_legacy(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    p = default_daily_state_path(account_id=None)
+    assert p == tmp_path / ".trading-agent-skills" / "daily_state.json"

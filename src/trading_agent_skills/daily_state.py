@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Optional
 from zoneinfo import ZoneInfo
 
 from trading_agent_skills.decimal_io import D
@@ -160,12 +161,27 @@ def tick(
     return SessionInfo(state=stored, next_reset_utc=next_reset, just_reset=just_reset)
 
 
+def default_daily_state_path(account_id: Optional[str] = None) -> Path:
+    """Resolve the daily-state path for an account_id, or the legacy root path.
+
+    With account_id: ~/.trading-agent-skills/accounts/<id>/daily_state.json
+    Without: ~/.trading-agent-skills/daily_state.json (backwards-compat for manual use)
+    """
+    base = Path.home() / ".trading-agent-skills"
+    if account_id:
+        from trading_agent_skills.account_paths import resolve_account_paths
+
+        return resolve_account_paths(account_id=account_id).daily_state
+    return base / "daily_state.json"
+
+
 __all__ = [
     "DEFAULT_STATE_PATH",
     "DailyState",
     "SessionInfo",
     "compute_last_reset",
     "compute_next_reset",
+    "default_daily_state_path",
     "load_state",
     "write_state",
     "tick",

@@ -7,6 +7,17 @@ description: Use when the user asks for a price-action read, structural setup, b
 
 Hybrid classical + ICT structural reader. Returns full structure (pivots, S/R, FVGs, OBs, liquidity pools, EMA stack, regime per TF) plus 0–3 ranked setup candidates. The skill never executes a trade; it hands off to [`pre-trade-checklist`](../pre-trade-checklist/SKILL.md) and [`position-sizer`](../position-sizer/SKILL.md) when the user wants to act on a candidate.
 
+## Prerequisites & first-run setup
+
+Before the first invocation, verify:
+
+1. **`trading-agent-skills-price-action` CLI is on PATH.** Test with `trading-agent-skills-price-action --help`. If not found: "Install the Python package — from the agent-trading-skills repo, run `pip install -e .` in a venv your harness can see."
+2. **`mt5-mcp` server is connected.** Verify with `mcp__mt5-mcp__ping`. The skill needs `get_rates` (multi-timeframe bars), `get_quote`, and `get_symbols` (tick_size + digits). Without it, the skill cannot run.
+
+No Calix, no news API keys, no `config.toml`. The CLI is pure-function — input goes in, structure + setups come out.
+
+If (1) or (2) fail, walk the user through the fix before fanning out the rates calls.
+
 ## When to invoke
 
 - "what's the setup on XAUUSD"

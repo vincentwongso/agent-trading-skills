@@ -7,6 +7,16 @@ description: Use when the user wants to log a completed trade, add a post-trade 
 
 Append-only JSONL journal of completed trades + retrospective reflections, plus performance analytics. The skill never executes trades — it records and queries. Schema is versioned (`schema_version: 1`) so future migrations are explicit.
 
+## Prerequisites & first-run setup
+
+This is the lightest-setup skill in the bundle:
+
+1. **`trading-agent-skills-journal` CLI is on PATH.** Test with `trading-agent-skills-journal --help`. If not found: "Install the Python package — from the agent-trading-skills repo, run `pip install -e .` in a venv your harness can see."
+2. **`~/.trading-agent-skills/journal.jsonl`** is auto-created on first `write`. Nothing to configure.
+3. **`mt5-mcp` is OPTIONAL** — only needed for the auto-populate flow ("journal my last UKOIL trade" pulls fields from `get_history`). Manual writes work without it. If the user asks to auto-populate but `mt5-mcp` isn't connected, fall back to asking them for the trade fields directly.
+
+No news API keys, no `config.toml`, no Calix dependency. Proceed straight to the workflow.
+
 ## When to invoke
 
 **Write a new entry:**

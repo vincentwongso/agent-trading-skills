@@ -9,6 +9,26 @@ Combines economic + earnings calendar (Calix), a fan-out across three news APIs 
 
 The skill never executes — output is informational. Use [`pre-trade-checklist`](../pre-trade-checklist/SKILL.md) before entering any trade the brief surfaces.
 
+## Prerequisites & first-run setup
+
+This is the most setup-heavy skill in the bundle. Before the first invocation, verify:
+
+1. **`trading-agent-skills-news` CLI is on PATH.** Test with `trading-agent-skills-news --help`. If not found: "Install the Python package — from the agent-trading-skills repo, run `pip install -e .` in a venv your harness can see."
+2. **`mt5-mcp` server is connected.** Verify with `mcp__mt5-mcp__ping`. The brief uses `get_positions` (tier-2 watchlist), `get_symbols`, and `get_rates` (D1 bars for ATR/RSI swing candidates).
+3. **Calix is reachable** at `https://calix.fintrixmarkets.com`. If unreachable, the calendar overlay degrades with `CALIX_DEGRADED` and the brief still runs.
+4. **At least one news API key is set as an environment variable.** Check via the agent's environment: `FINNHUB_API_KEY`, `MARKETAUX_API_KEY`, `FOREXNEWS_API_KEY`. Each one is independent — the brief works with any subset, missing keys surface as `MISSING_NEWS_API_KEY` flags. If **none** are set, walk the user through this:
+
+   > "The news section needs at least one of these API keys (all have free tiers):
+   > - Finnhub: https://finnhub.io
+   > - Marketaux: https://marketaux.com
+   > - ForexNews: https://forexnewsapi.com
+   >
+   > After signing up, set the key. **Recommended (cross-session, Windows-friendly):** create `~/.trading-agent-skills/.env` with one line per key, e.g. `FINNHUB_API_KEY=abc123`. The CLI auto-loads this file. Alternatively, export in your shell (`export FINNHUB_API_KEY=...` on bash, `$env:FINNHUB_API_KEY=\"...\"` on PowerShell)."
+
+5. **`~/.trading-agent-skills/config.toml`** is auto-generated on first run. Default watchlist is `XAUUSD / XAGUSD / USOIL / UKOIL / NAS100`; the user can edit `watchlist.default` and `watchlist.base_universe`.
+
+If (1) or (2) fail, walk the user through the fix before bundling MCP outputs. (4) is non-fatal — proceed and surface the flag in the result.
+
 ## When to invoke
 
 Trigger phrases:

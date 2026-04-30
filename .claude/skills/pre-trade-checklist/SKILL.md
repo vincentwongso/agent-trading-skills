@@ -9,6 +9,17 @@ Runs a structured gate before a new entry: composes [`daily-risk-guardian`](../d
 
 The skill never executes orders — output is informational. Use the [`mt5-trading`](../mt5-trading/SKILL.md) skill (or its equivalent) for actual entries.
 
+## Prerequisites & first-run setup
+
+Before the first invocation, verify:
+
+1. **`trading-agent-skills-checklist` CLI is on PATH.** Test with `trading-agent-skills-checklist --help`. If not found: "Install the Python package — from the agent-trading-skills repo, run `pip install -e .` in a venv your harness can see."
+2. **`mt5-mcp` server is connected.** Verify with `mcp__mt5-mcp__ping`. The checklist needs `get_account_info`, `get_positions`, `get_symbols`, `get_history`, `get_market_hours`, and `get_quote`. Without it, the skill cannot run.
+3. **Calix is reachable** at `https://calix.fintrixmarkets.com` (no key needed). If unreachable or returning 5xx, the checklist will degrade with a `CALIX_DEGRADED` flag and WARN — that's by design, not a setup failure. If the user's network blocks it, mention this once.
+4. **`~/.trading-agent-skills/config.toml`** is auto-generated on first run. The defaults match the guardian (5% daily cap, etc.). Same `daily_state.json` and `spread_baseline.json` as the guardian — first call bootstraps both.
+
+If (1) or (2) fail, walk the user through the fix before bundling MCP outputs.
+
 ## When to invoke
 
 Trigger phrases:

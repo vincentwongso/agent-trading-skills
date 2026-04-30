@@ -7,6 +7,16 @@ description: Use when the user asks how big a Forex/index/metals trade should be
 
 This skill computes a recommended lot size for a Forex / index / metals trade given (a) the user's account equity, (b) a target risk (% of equity OR absolute deposit-currency amount), (c) a stop distance (price level OR points), and (d) a side. It returns: recommended lot, broker-authoritative margin (with formula cross-check), cash-risk-at-stop, daily swap rates, sanity flags. It never mutates broker state — execution stays behind `mt5-trading`'s consent flow.
 
+## Prerequisites & first-run setup
+
+Before the first invocation, verify:
+
+1. **`trading-agent-skills-size` CLI is on PATH.** Test with `trading-agent-skills-size --help`. If not found, tell the user: "Install the Python package — from the agent-trading-skills repo, run `pip install -e .` in a venv your harness can see (or `pipx install -e .` for a global install)."
+2. **`mt5-mcp` server is connected.** This skill cannot work without it. Verify with `mcp__mt5-mcp__ping`. If unconfigured, point the user to https://github.com/vincentwongso/mt5-mcp.
+3. **`~/.trading-agent-skills/config.toml`** is auto-generated on first run with safe defaults (1% per-trade max). The user can edit `risk.per_trade_max_pct` if they want a different default — mention this once when first invoked, then don't re-prompt.
+
+If any of (1) or (2) fail, walk the user through the fix before attempting the workflow below — don't fan out MCP calls until prereqs pass.
+
 ## When to invoke
 
 Trigger phrases:

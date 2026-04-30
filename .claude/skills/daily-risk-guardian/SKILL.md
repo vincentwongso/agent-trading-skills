@@ -7,6 +7,16 @@ description: Use when the user asks about today's risk status, whether they're c
 
 Tracks today's realized + unrealized exposure against a daily loss cap, with positions classified as `AT_RISK`, `RISK_FREE`, or `LOCKED_PROFIT` (LLM-judged from SL location, news, structure). "Today" = since the most recent NY 4pm ET close (= 6am AEST), DST handled by `zoneinfo`. The skill never executes orders — output is informational.
 
+## Prerequisites & first-run setup
+
+Before the first invocation, verify:
+
+1. **`trading-agent-skills-guardian` CLI is on PATH.** Test with `trading-agent-skills-guardian --help`. If not found: "Install the Python package — from the agent-trading-skills repo, run `pip install -e .` in a venv your harness can see."
+2. **`mt5-mcp` server is connected.** Verify with `mcp__mt5-mcp__ping`. Without it the skill can't fetch positions, account info, or today's deal history. Point the user to https://github.com/vincentwongso/mt5-mcp.
+3. **`~/.trading-agent-skills/config.toml`** is auto-generated on first run with defaults (5% daily cap, 2.5% caution threshold, 5% concurrent risk budget). The first guardian call will report `session_just_reset: true` and anchor the session at *current* equity — so don't run it for the first time mid-drawdown unless the user wants the session anchored at that point. Mention this once when first invoked.
+
+If (1) or (2) fail, walk the user through the fix before bundling MCP outputs.
+
 ## When to invoke
 
 Trigger phrases:

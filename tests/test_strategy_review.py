@@ -8,11 +8,35 @@ import pytest
 from trading_agent_skills.account_paths import resolve_account_paths
 from trading_agent_skills.decision_log import write_intent
 from trading_agent_skills.journal_io import write_open
+from trading_agent_skills.charter_io import parse_charter
 from trading_agent_skills.strategy_review import (
+    PROPOSABLE_FIELDS,
+    apply_proposal,
+    build_proposal_skeleton,
     compute_decision_summary,
     compute_performance_summary,
     compute_setup_breakdown,
+    validate_proposal_diff,
 )
+
+
+_VALID_CHARTER_TEXT = """\
+mode: demo
+account_id: 12345678
+heartbeat: 1h
+hard_caps:
+  per_trade_risk_pct: 1.0
+  daily_loss_pct: 5.0
+  max_concurrent_positions: 3
+charter_version: 1
+created_at: 2026-04-30T14:00:00+10:00
+created_account_balance: 10000.00
+trading_style: day
+sessions_allowed: []
+instruments: []
+allowed_setups: []
+notes: ""
+"""
 
 
 def _seed_journal(path: Path, n_wins: int, n_losses: int) -> None:
@@ -123,3 +147,64 @@ def test_decision_summary_groups_skip_reasons(tmp_path: Path) -> None:
     assert summary["skips"] == 3
     assert summary["entries"] == 0
     assert summary["top_skip_reasons"][0] == ("spread_too_wide", 2)
+
+
+def test_proposable_fields_excludes_locked() -> None:
+    assert "mode" not in PROPOSABLE_FIELDS
+    assert "account_id" not in PROPOSABLE_FIELDS
+    assert "created_at" not in PROPOSABLE_FIELDS
+    assert "created_account_balance" not in PROPOSABLE_FIELDS
+    assert "charter_version" not in PROPOSABLE_FIELDS
+    assert "per_trade_risk_pct" in PROPOSABLE_FIELDS
+    assert "instruments" in PROPOSABLE_FIELDS
+    assert "allowed_setups" in PROPOSABLE_FIELDS
+
+
+def test_validate_proposal_rejects_locked_field_change() -> None:
+    bad = {"mode": "live"}
+    with pytest.raises(ValueError, match="locked"):
+        validate_proposal_diff(bad)
+
+
+def test_validate_proposal_accepts_proposable_fields() -> None:
+    ok = {"per_trade_risk_pct": 0.8, "allowed_setups": ["price_action:pin_bar"]}
+    validate_proposal_diff(ok)  # no exception
+
+
+def test_build_proposal_skeleton_emits_markdown(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    paths.charter.write_text(_VALID_CHARTER_TEXT, encoding="utf-8")
+    paths.journal.touch()
+    md = build_proposal_skeleton(
+        paths,
+        since=datetime(2026, 4, 25, tzinfo=timezone.utc),
+        until=datetime(2026, 5, 2, tzinfo=timezone.utc),
+    )
+    assert "Strategy review" in md
+    assert "Performance summary" in md
+    assert "Decision-log analysis" in md
+    assert "Charter diff proposal" in md
+    assert "Reply with" in md
+
+
+def test_apply_proposal_increments_version_and_archives(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    paths.charter.write_text(_VALID_CHARTER_TEXT, encoding="utf-8")
+    new_charter = apply_proposal(
+        paths,
+        approved_changes={"per_trade_risk_pct": 0.8},
+    )
+    assert new_charter.charter_version == 2
+    assert new_charter.hard_caps.per_trade_risk_pct == 0.8
+    assert (paths.charter_versions / "v1.md").is_file()
+    assert "per_trade_risk_pct: 0.8" in paths.charter.read_text(encoding="utf-8")
+
+
+def test_apply_proposal_rejects_locked_field(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    paths.charter.write_text(_VALID_CHARTER_TEXT, encoding="utf-8")
+    with pytest.raises(ValueError, match="locked"):
+        apply_proposal(paths, approved_changes={"mode": "live"})

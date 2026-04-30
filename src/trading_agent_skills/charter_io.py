@@ -59,7 +59,7 @@ class Charter:
 
 
 _TOP_LEVEL_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
-_NESTED_RE = re.compile(r"^\s{2,}([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
+_NESTED_RE = re.compile(r"^(?:[ ]{2,}|\t+)([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
 
 
 def parse_charter(text: str) -> Charter:
@@ -97,6 +97,11 @@ def _build_charter(top: dict[str, str], hc: dict[str, str]) -> Charter:
         if key not in hc:
             raise CharterError(f"missing required hard_caps.{key}")
 
+    non_empty_string_fields = ("mode", "account_id", "heartbeat", "created_at", "trading_style")
+    for key in non_empty_string_fields:
+        if not top[key]:
+            raise CharterError(f"{key} must be a non-empty string")
+
     mode = top["mode"]
     if mode not in ALLOWED_MODES:
         raise CharterError(f"mode must be one of {ALLOWED_MODES}, got {mode!r}")
@@ -115,13 +120,22 @@ def _build_charter(top: dict[str, str], hc: dict[str, str]) -> Charter:
             f"got heartbeat={heartbeat!r}"
         )
 
-    per_trade = float(hc["per_trade_risk_pct"])
+    try:
+        per_trade = float(hc["per_trade_risk_pct"])
+    except ValueError as exc:
+        raise CharterError(f"per_trade_risk_pct: not a valid number — {exc}") from exc
     if not 0 < per_trade <= 5.0:
         raise CharterError(f"per_trade_risk_pct must be in (0, 5.0], got {per_trade}")
-    daily_loss = float(hc["daily_loss_pct"])
+    try:
+        daily_loss = float(hc["daily_loss_pct"])
+    except ValueError as exc:
+        raise CharterError(f"daily_loss_pct: not a valid number — {exc}") from exc
     if not 0 < daily_loss <= 20.0:
         raise CharterError(f"daily_loss_pct must be in (0, 20.0], got {daily_loss}")
-    max_conc = int(hc["max_concurrent_positions"])
+    try:
+        max_conc = int(hc["max_concurrent_positions"])
+    except ValueError as exc:
+        raise CharterError(f"max_concurrent_positions: not a valid integer — {exc}") from exc
     if not 1 <= max_conc <= 20:
         raise CharterError(
             f"max_concurrent_positions must be in [1, 20], got {max_conc}"
@@ -132,6 +146,15 @@ def _build_charter(top: dict[str, str], hc: dict[str, str]) -> Charter:
         if s not in ALLOWED_SESSIONS:
             raise CharterError(f"sessions_allowed[] entry {s!r} not in {ALLOWED_SESSIONS}")
 
+    try:
+        charter_version = int(top["charter_version"])
+    except ValueError as exc:
+        raise CharterError(f"charter_version: not a valid integer — {exc}") from exc
+    try:
+        created_account_balance = float(top["created_account_balance"])
+    except ValueError as exc:
+        raise CharterError(f"created_account_balance: not a valid number — {exc}") from exc
+
     return Charter(
         mode=mode,
         account_id=top["account_id"],
@@ -141,9 +164,9 @@ def _build_charter(top: dict[str, str], hc: dict[str, str]) -> Charter:
             daily_loss_pct=daily_loss,
             max_concurrent_positions=max_conc,
         ),
-        charter_version=int(top["charter_version"]),
+        charter_version=charter_version,
         created_at=top["created_at"],
-        created_account_balance=float(top["created_account_balance"]),
+        created_account_balance=created_account_balance,
         trading_style=style,
         sessions_allowed=sessions,
         instruments=_parse_list(top.get("instruments", "[]")),

@@ -97,3 +97,36 @@ def test_rejects_missing_required_field() -> None:
     bad = _VALID_CHARTER.replace("mode: demo\n", "")
     with pytest.raises(CharterError, match="mode"):
         parse_charter(bad)
+
+
+def test_rejects_empty_account_id() -> None:
+    bad = _VALID_CHARTER.replace("account_id: 12345678", "account_id:")
+    with pytest.raises(CharterError, match="account_id"):
+        parse_charter(bad)
+
+
+def test_rejects_empty_mode() -> None:
+    bad = _VALID_CHARTER.replace("mode: demo", "mode:")
+    with pytest.raises(CharterError, match="mode"):
+        parse_charter(bad)
+
+
+def test_rejects_non_numeric_charter_version() -> None:
+    bad = _VALID_CHARTER.replace("charter_version: 1", "charter_version: abc")
+    with pytest.raises(CharterError, match="charter_version"):
+        parse_charter(bad)
+
+
+def test_rejects_non_numeric_balance() -> None:
+    bad = _VALID_CHARTER.replace("created_account_balance: 10000.00", "created_account_balance: $10k")
+    with pytest.raises(CharterError, match="created_account_balance"):
+        parse_charter(bad)
+
+
+def test_accepts_tab_indented_hard_caps() -> None:
+    tab_charter = _VALID_CHARTER.replace(
+        "hard_caps:\n  per_trade_risk_pct: 1.0\n  daily_loss_pct: 5.0\n  max_concurrent_positions: 3",
+        "hard_caps:\n\tper_trade_risk_pct: 1.0\n\tdaily_loss_pct: 5.0\n\tmax_concurrent_positions: 3",
+    )
+    c = parse_charter(tab_charter)
+    assert c.hard_caps.per_trade_risk_pct == 1.0

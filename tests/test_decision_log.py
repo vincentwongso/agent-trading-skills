@@ -7,7 +7,9 @@ from trading_agent_skills.decision_log import (
     ALLOWED_KINDS,
     ALLOWED_EXEC_STATUSES,
     DecisionSchemaError,
+    reconcile_decisions,
     write_intent,
+    write_outcome,
 )
 
 
@@ -167,3 +169,91 @@ def test_allowed_constants() -> None:
     assert "filled" in ALLOWED_EXEC_STATUSES
     assert "rejected" in ALLOWED_EXEC_STATUSES
     assert "broker_error" in ALLOWED_EXEC_STATUSES
+
+
+def test_outcome_pending_to_filled(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    write_intent(
+        path, kind="open", symbol="XAUUSD.z", ticket=None,
+        setup_type="price_action:pin_bar", reasoning="r", skills_used=[],
+        guardian_status="CLEAR", checklist_verdict="PASS",
+        execution={"side": "BUY", "volume": "0.08",
+                   "entry_price": "2380.50", "sl": "2375.00", "tp": "2395.00"},
+        charter_version=3, tick_id="2026-04-30T22:00:00Z",
+    )
+    write_outcome(
+        path, tick_id="2026-04-30T22:00:00Z", kind="open", symbol="XAUUSD.z",
+        execution_status="filled", ticket=99999,
+        actual_fill_price="2380.55", failure_reason=None,
+    )
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    intent = json.loads(lines[0])
+    outcome = json.loads(lines[1])
+    assert intent["execution"]["execution_status"] == "pending"
+    assert outcome["execution"]["execution_status"] == "filled"
+    assert outcome["ticket"] == 99999
+
+
+def test_outcome_rejected_with_reason(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    write_intent(
+        path, kind="open", symbol="X", ticket=None, setup_type="x",
+        reasoning="r", skills_used=[], guardian_status="CLEAR", checklist_verdict="PASS",
+        execution={"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                   "sl": "0.99", "tp": "1.02"},
+        charter_version=1, tick_id="2026-04-30T22:00:00Z",
+    )
+    write_outcome(
+        path, tick_id="2026-04-30T22:00:00Z", kind="open", symbol="X",
+        execution_status="rejected", ticket=None, actual_fill_price=None,
+        failure_reason="market closed",
+    )
+    outcome = json.loads(path.read_text(encoding="utf-8").splitlines()[1])
+    assert outcome["execution"]["execution_status"] == "rejected"
+    assert outcome["execution"]["failure_reason"] == "market closed"
+
+
+def test_outcome_rejects_invalid_status(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    with pytest.raises(DecisionSchemaError, match="execution_status"):
+        write_outcome(
+            path, tick_id="2026-04-30T22:00:00Z", kind="open", symbol="X",
+            execution_status="totally_filled", ticket=1,
+            actual_fill_price=None, failure_reason=None,
+        )
+
+
+def test_reconcile_picks_latest_outcome(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    write_intent(
+        path, kind="open", symbol="XAUUSD.z", ticket=None, setup_type="x",
+        reasoning="why", skills_used=[], guardian_status="CLEAR", checklist_verdict="PASS",
+        execution={"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                   "sl": "0.99", "tp": "1.02"},
+        charter_version=1, tick_id="2026-04-30T22:00:00Z",
+    )
+    write_outcome(
+        path, tick_id="2026-04-30T22:00:00Z", kind="open", symbol="XAUUSD.z",
+        execution_status="filled", ticket=42, actual_fill_price="1.0001",
+        failure_reason=None,
+    )
+    reconciled = list(reconcile_decisions(path))
+    assert len(reconciled) == 1
+    rec = reconciled[0]
+    assert rec["reasoning"] == "why"
+    assert rec["execution"]["execution_status"] == "filled"
+    assert rec["ticket"] == 42
+
+
+def test_reconcile_orphan_intent_stays_pending(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    write_intent(
+        path, kind="open", symbol="X", ticket=None, setup_type="x",
+        reasoning="r", skills_used=[], guardian_status="CLEAR", checklist_verdict="PASS",
+        execution={"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                   "sl": "0.99", "tp": "1.02"},
+        charter_version=1, tick_id="2026-04-30T22:00:00Z",
+    )
+    reconciled = list(reconcile_decisions(path))
+    assert reconciled[0]["execution"]["execution_status"] == "pending"

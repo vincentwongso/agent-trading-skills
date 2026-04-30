@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
 
 
 SCHEMA_VERSION = 1
@@ -114,3 +114,88 @@ def write_intent(
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record) + "\n")
     return record
+
+
+def write_outcome(
+    path: Path,
+    *,
+    tick_id: str,
+    kind: str,
+    symbol: str,
+    execution_status: str,
+    ticket: Optional[int],
+    actual_fill_price: Optional[str],
+    failure_reason: Optional[str],
+) -> dict[str, Any]:
+    if execution_status not in ALLOWED_EXEC_STATUSES or execution_status == "pending":
+        raise DecisionSchemaError(
+            f"execution_status must be in {set(ALLOWED_EXEC_STATUSES) - {'pending'}}, "
+            f"got {execution_status!r}"
+        )
+    if kind not in ALLOWED_KINDS:
+        raise DecisionSchemaError(f"kind must be in {ALLOWED_KINDS}, got {kind!r}")
+    _validate_tick_id(tick_id)
+    if actual_fill_price is not None and not isinstance(actual_fill_price, str):
+        raise DecisionSchemaError("actual_fill_price must be a string or None")
+
+    execution: dict[str, Any] = {"execution_status": execution_status}
+    if actual_fill_price is not None:
+        execution["actual_fill_price"] = actual_fill_price
+    if failure_reason is not None:
+        execution["failure_reason"] = failure_reason
+
+    record: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "kind": kind,
+        "symbol": symbol,
+        "ticket": ticket,
+        "execution": execution,
+        "tick_id": tick_id,
+        "is_outcome": True,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record) + "\n")
+    return record
+
+
+def _read_records(path: Path) -> Iterable[dict[str, Any]]:
+    if not path.is_file():
+        return
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            yield json.loads(line)
+
+
+def reconcile_decisions(path: Path) -> Iterable[dict[str, Any]]:
+    """Yield one merged record per (tick_id, kind, symbol).
+
+    Intent record is the base; outcome record (latest by ts) overrides
+    execution dict and ticket. Orphan intents (no outcome yet) keep
+    execution_status='pending'.
+    """
+    intents: dict[tuple[str, str, str], dict[str, Any]] = {}
+    outcomes: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for rec in _read_records(path):
+        key = (rec.get("tick_id"), rec.get("kind"), rec.get("symbol"))
+        if rec.get("is_outcome"):
+            existing = outcomes.get(key)
+            if existing is None or rec["ts"] > existing["ts"]:
+                outcomes[key] = rec
+        else:
+            intents[key] = rec
+
+    for key, intent in intents.items():
+        merged = dict(intent)
+        outcome = outcomes.get(key)
+        if outcome:
+            merged_exec = dict(intent.get("execution") or {})
+            merged_exec.update(outcome["execution"])
+            merged["execution"] = merged_exec
+            if outcome.get("ticket") is not None:
+                merged["ticket"] = outcome["ticket"]
+        yield merged

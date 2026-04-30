@@ -24,6 +24,7 @@ trading-agent-skills-guardian = "trading_agent_skills.cli.guardian:main"
 trading-agent-skills-checklist = "trading_agent_skills.cli.checklist:main"
 trading-agent-skills-news = "trading_agent_skills.cli.news:main"
 trading-agent-skills-price-action = "trading_agent_skills.cli.price_action:main"
+trading-agent-skills-strategy-review = "trading_agent_skills.cli.strategy_review:main"
 
 [build-system]
 requires = ["hatchling"]

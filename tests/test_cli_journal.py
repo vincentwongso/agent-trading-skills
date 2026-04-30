@@ -282,3 +282,52 @@ def test_cli_decision_write_invalid_payload_nonzero_exit(tmp_path: Path) -> None
     res = _run_decision_write(decisions, {"kind": "explode"})  # missing fields too
     assert res.returncode != 0
     assert "kind" in res.stderr or "kind" in res.stdout
+
+
+# --- decision read ------------------------------------------------------
+
+
+def test_cli_decision_read_filters(tmp_path: Path) -> None:
+    decisions = tmp_path / "decisions.jsonl"
+    # Seed two intents
+    for sym in ("XAUUSD.z", "EURUSD.z"):
+        _run_decision_write(decisions, {
+            "kind": "open", "symbol": sym, "ticket": None,
+            "setup_type": "price_action:pin_bar", "reasoning": "r",
+            "skills_used": [], "guardian_status": "CLEAR", "checklist_verdict": "PASS",
+            "execution": {"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                          "sl": "0.99", "tp": "1.02"},
+            "charter_version": 1, "tick_id": "2026-04-30T22:00:00Z",
+        })
+    res = subprocess.run(
+        [sys.executable, "-m", "trading_agent_skills.cli.journal",
+         "decision", "read", "--decisions-path", str(decisions),
+         "--symbol", "XAUUSD.z"],
+        text=True, capture_output=True,
+    )
+    assert res.returncode == 0
+    out = json.loads(res.stdout)
+    assert len(out["records"]) == 1
+    assert out["records"][0]["symbol"] == "XAUUSD.z"
+
+
+def test_cli_decision_read_since(tmp_path: Path) -> None:
+    decisions = tmp_path / "decisions.jsonl"
+    for tick_day, sym in (("2026-04-25T00:00:00Z", "OLD"), ("2026-04-30T00:00:00Z", "NEW")):
+        _run_decision_write(decisions, {
+            "kind": "open", "symbol": sym, "ticket": None,
+            "setup_type": "x", "reasoning": "r", "skills_used": [],
+            "guardian_status": "CLEAR", "checklist_verdict": "PASS",
+            "execution": {"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                          "sl": "0.99", "tp": "1.02"},
+            "charter_version": 1, "tick_id": tick_day,
+        })
+    res = subprocess.run(
+        [sys.executable, "-m", "trading_agent_skills.cli.journal",
+         "decision", "read", "--decisions-path", str(decisions),
+         "--since", "2026-04-29T00:00:00Z"],
+        text=True, capture_output=True,
+    )
+    assert res.returncode == 0
+    out = json.loads(res.stdout)
+    assert {r["symbol"] for r in out["records"]} == {"NEW"}

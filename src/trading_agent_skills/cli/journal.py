@@ -24,6 +24,7 @@ from typing import Any, Optional
 
 from trading_agent_skills.decision_log import (
     DecisionSchemaError,
+    filter_decisions,
     write_intent,
     write_outcome,
 )
@@ -247,6 +248,17 @@ def cmd_decision_write_outcome(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_decision_read(args: argparse.Namespace) -> int:
+    since_dt = None
+    if args.since:
+        since_dt = datetime.fromisoformat(args.since.replace("Z", "+00:00"))
+    records = list(filter_decisions(
+        args.decisions_path, since=since_dt, kind=args.kind, symbol=args.symbol
+    ))
+    print(json.dumps({"records": records}))
+    return 0
+
+
 # --- entry point ----------------------------------------------------------
 
 
@@ -316,6 +328,25 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
     p_dec_outcome.set_defaults(func=cmd_decision_write_outcome)
+
+    p_dec_read = decision_sub.add_parser(
+        "read", help="Read reconciled decision records, JSON to stdout."
+    )
+    p_dec_read.add_argument(
+        "--decisions-path",
+        type=lambda s: Path(s).expanduser(),
+        required=True,
+    )
+    p_dec_read.add_argument(
+        "--since", type=str, default=None,
+        help="ISO 8601 cutoff; records older than this are excluded.",
+    )
+    p_dec_read.add_argument(
+        "--kind", type=str, default=None,
+        choices=["open", "modify", "close", "skip", "mode_change"],
+    )
+    p_dec_read.add_argument("--symbol", type=str, default=None)
+    p_dec_read.set_defaults(func=cmd_decision_read)
 
     return parser
 

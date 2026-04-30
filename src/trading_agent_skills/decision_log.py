@@ -217,3 +217,26 @@ def reconcile_decisions(path: Path) -> Iterable[dict[str, Any]]:
 def _parse_ts(ts: str) -> datetime:
     """Parse an ISO 8601 timestamp string. Accepts both '+00:00' and 'Z' suffixes."""
     return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+
+
+def filter_decisions(
+    path: Path,
+    *,
+    since: Optional[datetime] = None,
+    kind: Optional[str] = None,
+    symbol: Optional[str] = None,
+) -> Iterable[dict[str, Any]]:
+    """Yield reconciled decisions matching all supplied predicates."""
+    for rec in reconcile_decisions(path):
+        if kind is not None and rec.get("kind") != kind:
+            continue
+        if symbol is not None and rec.get("symbol") != symbol:
+            continue
+        if since is not None:
+            tick = rec.get("tick_id")
+            if tick is None:
+                continue
+            tick_dt = datetime.fromisoformat(tick.replace("Z", "+00:00"))
+            if tick_dt < since:
+                continue
+        yield rec

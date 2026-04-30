@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from trading_agent_skills.decision_log import (
     ALLOWED_KINDS,
     ALLOWED_EXEC_STATUSES,
     DecisionSchemaError,
+    filter_decisions,
     reconcile_decisions,
     write_intent,
     write_outcome,
@@ -326,3 +328,63 @@ def test_reconcile_handles_z_suffix_in_ts(tmp_path: Path) -> None:
     assert len(reconciled) == 1
     assert reconciled[0]["execution"]["execution_status"] == "filled"
     assert reconciled[0]["ticket"] == 99999
+
+
+def _seed_decisions(path: Path) -> None:
+    base = datetime(2026, 4, 29, 22, 0, 0, tzinfo=timezone.utc)
+    for i, (kind, sym, setup) in enumerate([
+        ("open", "XAUUSD.z", "price_action:pin_bar"),
+        ("skip", "EURUSD.z", "price_action:fvg_fill"),
+        ("close", "XAUUSD.z", None),
+    ]):
+        tick = (base + timedelta(days=i)).isoformat().replace("+00:00", "Z")
+        kwargs = dict(
+            kind=kind, symbol=sym, ticket=None if kind == "skip" else 100 + i,
+            setup_type=setup, reasoning=f"r{i}", skills_used=[],
+            guardian_status="CLEAR",
+            checklist_verdict="PASS" if kind == "open" else ("BLOCK" if kind == "skip" else None),
+            charter_version=1, tick_id=tick,
+        )
+        if kind == "skip":
+            write_intent(path, execution=None, **kwargs)
+        else:
+            write_intent(
+                path,
+                execution={"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                           "sl": "0.99", "tp": "1.02"},
+                **kwargs,
+            )
+
+
+def test_filter_by_kind(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    _seed_decisions(path)
+    skips = list(filter_decisions(path, kind="skip"))
+    assert len(skips) == 1
+    assert skips[0]["symbol"] == "EURUSD.z"
+
+
+def test_filter_by_symbol(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    _seed_decisions(path)
+    xau = list(filter_decisions(path, symbol="XAUUSD.z"))
+    assert len(xau) == 2
+    assert {r["kind"] for r in xau} == {"open", "close"}
+
+
+def test_filter_since_filters_old(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    _seed_decisions(path)
+    cutoff = datetime(2026, 4, 30, 0, 0, 0, tzinfo=timezone.utc)
+    recent = list(filter_decisions(path, since=cutoff))
+    # Three records seeded at 2026-04-29, 2026-04-30, 2026-05-01 — only 04-30 and 05-01 pass
+    assert len(recent) == 2
+
+
+def test_filter_combines_predicates(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    _seed_decisions(path)
+    cutoff = datetime(2026, 4, 30, 0, 0, 0, tzinfo=timezone.utc)
+    recent_xau = list(filter_decisions(path, since=cutoff, symbol="XAUUSD.z"))
+    assert len(recent_xau) == 1
+    assert recent_xau[0]["kind"] == "close"

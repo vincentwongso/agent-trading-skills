@@ -9,6 +9,7 @@ import pytest
 from trading_agent_skills.journal_io import (
     SCHEMA_VERSION,
     SchemaError,
+    default_journal_path,
     filter_resolved,
     read_raw,
     read_resolved,
@@ -323,3 +324,22 @@ def test_suggest_tags_orders_by_frequency(tmp_path: Path):
 
 def test_suggest_tags_empty_for_missing_journal(tmp_path: Path):
     assert suggest_tags(tmp_path / "nope.jsonl") == []
+
+
+# --- default_journal_path -----------------------------------------------
+
+
+def test_default_path_with_account_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    path = default_journal_path(account_id="12345678")
+    expected = tmp_path / ".trading-agent-skills" / "accounts" / "12345678" / "journal.jsonl"
+    assert path == expected
+
+
+def test_default_path_without_account_id_is_legacy(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    path = default_journal_path(account_id=None)
+    expected = tmp_path / ".trading-agent-skills" / "journal.jsonl"
+    assert path == expected

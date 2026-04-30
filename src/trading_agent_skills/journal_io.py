@@ -327,6 +327,20 @@ def filter_resolved(
     return out
 
 
+def default_journal_path(account_id: Optional[str] = None) -> Path:
+    """Resolve the journal path for an account_id, or the legacy root path.
+
+    With account_id: ~/.trading-agent-skills/accounts/<id>/journal.jsonl
+    Without: ~/.trading-agent-skills/journal.jsonl (backwards-compat for manual use)
+    """
+    base = Path.home() / ".trading-agent-skills"
+    if account_id:
+        from trading_agent_skills.account_paths import resolve_account_paths
+
+        return resolve_account_paths(account_id=account_id).journal
+    return base / "journal.jsonl"
+
+
 def suggest_tags(path: Path | str) -> list[tuple[str, int]]:
     """Existing setup_type tags, ordered by frequency descending.
 

@@ -30,6 +30,7 @@ from trading_agent_skills.decision_log import (
 )
 from trading_agent_skills.journal_io import (
     SchemaError,
+    default_journal_path,
     filter_resolved,
     read_resolved,
     suggest_tags,
@@ -48,6 +49,13 @@ from trading_agent_skills.journal_stats import (
 
 
 DEFAULT_PATH = Path("~/.trading-agent-skills/journal.jsonl")
+
+
+def _resolve_journal_path(args: argparse.Namespace) -> Path:
+    """Resolution: explicit --journal-path wins; else --account-id; else legacy."""
+    if getattr(args, "journal_path", None) is not None:
+        return args.journal_path
+    return default_journal_path(account_id=getattr(args, "account_id", None))
 
 
 # --- helpers ---------------------------------------------------------------
@@ -116,6 +124,7 @@ def _read_stdin_or_file(path: str) -> str:
 
 
 def cmd_write(args: argparse.Namespace) -> int:
+    journal_path = _resolve_journal_path(args)
     raw = _read_stdin_or_file(args.input)
     try:
         bundle = json.loads(raw)
@@ -123,7 +132,7 @@ def cmd_write(args: argparse.Namespace) -> int:
         print(f"ERROR: invalid JSON: {exc}", file=sys.stderr)
         return 1
     try:
-        uid = write_open(args.journal_path, **bundle)
+        uid = write_open(journal_path, **bundle)
     except (TypeError, SchemaError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -131,11 +140,12 @@ def cmd_write(args: argparse.Namespace) -> int:
         json.dump({"uuid": uid}, sys.stdout)
         sys.stdout.write("\n")
     else:
-        print(f"Wrote entry {uid} to {args.journal_path}")
+        print(f"Wrote entry {uid} to {journal_path}")
     return 0
 
 
 def cmd_update(args: argparse.Namespace) -> int:
+    journal_path = _resolve_journal_path(args)
     raw = _read_stdin_or_file(args.input)
     try:
         bundle = json.loads(raw)
@@ -146,7 +156,7 @@ def cmd_update(args: argparse.Namespace) -> int:
         print("ERROR: 'uuid' is required for update", file=sys.stderr)
         return 1
     try:
-        write_update(args.journal_path, **bundle)
+        write_update(journal_path, **bundle)
     except (TypeError, SchemaError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -159,7 +169,7 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 
 def cmd_query(args: argparse.Namespace) -> int:
-    entries = read_resolved(args.journal_path)
+    entries = read_resolved(_resolve_journal_path(args))
     filtered = _apply_filter_args(entries, args)
     if args.swing_only:
         filtered = swing_subset(filtered)
@@ -169,7 +179,7 @@ def cmd_query(args: argparse.Namespace) -> int:
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
-    entries = read_resolved(args.journal_path)
+    entries = read_resolved(_resolve_journal_path(args))
     filtered = _apply_filter_args(entries, args)
     if args.swing_only:
         filtered = swing_subset(filtered)
@@ -194,7 +204,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 def cmd_tags(args: argparse.Namespace) -> int:
-    tags = suggest_tags(args.journal_path)
+    tags = suggest_tags(_resolve_journal_path(args))
     json.dump({"tags": [{"setup_type": t, "count": c} for t, c in tags]}, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
@@ -267,8 +277,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--journal-path",
         type=lambda s: Path(s).expanduser(),
-        default=DEFAULT_PATH.expanduser(),
-        help="Path to journal.jsonl (default: ~/.trading-agent-skills/journal.jsonl)",
+        default=None,
+        help="Path to journal.jsonl (default: per-account or ~/.trading-agent-skills/journal.jsonl)",
+    )
+    parser.add_argument(
+        "--account-id",
+        type=str,
+        default=None,
+        help="If set, journal is read/written under accounts/<id>/journal.jsonl",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 

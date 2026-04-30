@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import subprocess
 import sys
 from contextlib import redirect_stderr, redirect_stdout
@@ -309,6 +310,31 @@ def test_cli_decision_read_filters(tmp_path: Path) -> None:
     out = json.loads(res.stdout)
     assert len(out["records"]) == 1
     assert out["records"][0]["symbol"] == "XAUUSD.z"
+
+
+def test_cli_journal_account_id_routes_writes(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    payload = {
+        "symbol": "XAUUSD.z", "side": "buy", "volume": "0.1",
+        "entry_price": "2380.00", "exit_price": "2390.00",
+        "entry_time": "2026-04-30T08:00:00+00:00",
+        "exit_time": "2026-04-30T16:00:00+00:00",
+        "original_stop_distance_points": 50,
+        "original_risk_amount": "100.00", "realized_pnl": "100.00",
+        "swap_accrued": "0.00", "commission": "0.00",
+        "setup_type": "price_action:pin_bar", "rationale": "test",
+        "risk_classification_at_close": "AT_RISK",
+    }
+    env = {**os.environ, "HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}
+    res = subprocess.run(
+        [sys.executable, "-m", "trading_agent_skills.cli.journal",
+         "--account-id", "12345678", "write"],
+        input=json.dumps(payload), text=True, capture_output=True, env=env,
+    )
+    assert res.returncode == 0, res.stderr
+    expected = tmp_path / ".trading-agent-skills" / "accounts" / "12345678" / "journal.jsonl"
+    assert expected.is_file()
 
 
 def test_cli_decision_read_since(tmp_path: Path) -> None:

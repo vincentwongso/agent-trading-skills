@@ -1,5 +1,7 @@
 # trading-agent-skills
 
+> **AI agent installing this for a user?** → read [`AGENTS.md`](AGENTS.md) instead. It's a step-by-step playbook (detect harness → install Python pkg → register skills → verify) you can execute end-to-end. The rest of this README is human-oriented reference.
+
 Reasoning-layer agent skills for day trading on top of [`mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) (live MetaTrader 5 access) and [Calix](https://calix.fintrixmarkets.com) (economic + earnings calendar).
 
 Six skills, all read-only / advisory — none of them mutate broker state. Execution stays behind your existing `mt5-trading` consent flow.

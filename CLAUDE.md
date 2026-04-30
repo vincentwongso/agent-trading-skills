@@ -4,14 +4,20 @@ Reasoning-layer Claude Code skills for day trading. Composes [`mt5-mcp`](https:/
 
 The canonical design is `trading-agent-skills-plan.md` — read it before making any architectural decision. Persistent context (build state, user trading setup, conventions) lives in `~/.claude/projects/C--projects-trading-agent-skills/memory/` — read MEMORY.md for the index.
 
-## Status (last updated 2026-04-29)
+## Status (last updated 2026-05-01)
 
-All five skill bundles shipped on `main`:
+All five advisory skill bundles shipped on `main`, plus the autonomous
+trading loop:
 - ✅ `position-sizer` — lot sizing + margin cross-check + swap-aware output
 - ✅ `trade-journal` — append-only JSONL with R-multiple, swap-only P&L, swing-trade lens
 - ✅ `daily-risk-guardian` + `pre-trade-checklist` (paired) — NY-close session reset, LLM-judged AT_RISK predicate, Calix proximity, EWMA spread baseline
 - ✅ `session-news-brief` — 5-tier watchlist resolver, 3-API news fan-out + dedup, ATR/RSI swing candidates, Calix calendar overlay
 - ✅ `price-action` — hybrid classical + ICT structural reader, 9 detectors, structural quality scoring, hands off to checklist + sizer
+- ✅ `trading-heartbeat` — autonomous tick orchestrator (composes the 6 above)
+- ✅ `strategy-review` — weekly retrospective + user-gated charter tuning
+- ✅ `trade-journal decision` subcommand — intent/outcome reasoning trail
+- ✅ Per-account state namespacing under `~/.trading-agent-skills/accounts/<id>/`
+- ✅ Operating charter (hard caps + soft fields) with version archival
 
 443 pytest cases passing in ~1.0s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`. End-to-end live broker smoke test still pending (user said "I will test everything all in one at the end").
 
@@ -46,7 +52,12 @@ src/trading_agent_skills/        # pure-Python, Decimal-typed, no I/O at the pac
   news_brief.py        # skill 4 session-news-brief orchestrator
   price_action/        # skill 5 sub-package: bars, pivots, structure, fvg, order_block,
                        # liquidity, context, scoring, schema, scan, detectors/{9 files}
+  account_paths.py     # per-account namespace resolver
+  charter_io.py        # operating charter parse/validate/write/archive
+  decision_log.py      # decisions.jsonl intent/outcome with reconciliation
+  strategy_review.py   # weekly performance + charter proposal generator
   cli/{size,journal,guardian,checklist,news,price_action}.py
+  cli/strategy_review.py
 .claude/skills/
   position-sizer/SKILL.md + scripts/size.py
   trade-journal/SKILL.md + scripts/journal.py
@@ -54,6 +65,8 @@ src/trading_agent_skills/        # pure-Python, Decimal-typed, no I/O at the pac
   pre-trade-checklist/SKILL.md + scripts/checklist.py
   session-news-brief/SKILL.md + scripts/news.py
   price-action/SKILL.md + scripts/price_action.py
+  trading-heartbeat/SKILL.md
+  strategy-review/SKILL.md
 tests/                 # pytest, no live broker required
 ~/.trading-agent-skills/         # runtime files (not committed):
   journal.jsonl        # trade journal
@@ -62,6 +75,13 @@ tests/                 # pytest, no live broker required
   spread_baseline.json # EWMA per-symbol spread baselines
   calix_cache/         # 60s on-disk Calix cache
   news_cache/          # 60s on-disk news cache (Finnhub / Marketaux / ForexNews)
+  accounts/<account_id>/         # per-account state (NEW)
+    charter.md                   # operating charter
+    charter_versions/v<N>.md     # archived prior charters
+    decisions.jsonl              # intent + outcome records
+    proposals/<date>.md          # weekly review proposals
+    journal.jsonl                # per-account journal (vs. legacy root)
+    daily_state.json             # per-account session bookkeeping
 ```
 
 **API keys** for the news fan-out are read from environment variables — never config or code:

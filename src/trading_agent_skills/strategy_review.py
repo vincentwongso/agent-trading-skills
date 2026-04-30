@@ -17,6 +17,7 @@ from trading_agent_skills.charter_io import (
     Charter,
     HardCaps,
     parse_charter,
+    render_charter,
     write_charter_with_archive,
 )
 from trading_agent_skills.decision_log import filter_decisions
@@ -226,7 +227,12 @@ def apply_proposal(
     *,
     approved_changes: dict[str, Any],
 ) -> Charter:
-    """Apply approved field changes to the charter, bump version, archive prior."""
+    """Apply approved field changes to the charter, bump version, archive prior.
+
+    The new charter is round-tripped through render+parse before write,
+    so out-of-bounds values (e.g. per_trade_risk_pct: 99.0) are rejected
+    before they can corrupt the on-disk charter.
+    """
     validate_proposal_diff(approved_changes)
     current = parse_charter(paths.charter.read_text(encoding="utf-8"))
 
@@ -252,5 +258,8 @@ def apply_proposal(
         allowed_setups=approved_changes.get("allowed_setups", current.allowed_setups),
         notes=approved_changes.get("notes", current.notes),
     )
+    # Round-trip validate before write — out-of-bounds risk pcts (e.g. 99.0)
+    # would parse-fail and brick the next tick. Catch at write boundary instead.
+    parse_charter(render_charter(new_charter))
     write_charter_with_archive(paths, new_charter)
     return new_charter

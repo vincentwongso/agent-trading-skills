@@ -208,3 +208,16 @@ def test_apply_proposal_rejects_locked_field(tmp_path: Path) -> None:
     paths.charter.write_text(_VALID_CHARTER_TEXT, encoding="utf-8")
     with pytest.raises(ValueError, match="locked"):
         apply_proposal(paths, approved_changes={"mode": "live"})
+
+
+def test_apply_proposal_rejects_out_of_bounds_risk(tmp_path: Path) -> None:
+    """apply_proposal must round-trip-validate to reject malformed values."""
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    paths.charter.write_text(_VALID_CHARTER_TEXT, encoding="utf-8")
+    with pytest.raises(ValueError, match="per_trade_risk_pct"):
+        apply_proposal(paths, approved_changes={"per_trade_risk_pct": 99.0})
+    # Charter must NOT be written on validation failure
+    current = parse_charter(paths.charter.read_text(encoding="utf-8"))
+    assert current.charter_version == 1
+    assert current.hard_caps.per_trade_risk_pct == 1.0

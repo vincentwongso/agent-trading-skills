@@ -32,6 +32,16 @@ Read the spec at `docs/superpowers/specs/2026-04-30-autonomous-trading-loop-desi
   ```
   Parse mode, heartbeat, hard_caps, soft fields. If charter unparseable, log a `skip` decision with reasoning="charter_invalid" and exit.
 - Compute `tick_id = current UTC ISO 8601 timestamp` (e.g. `2026-04-30T22:00:00+00:00`).
+- **Resolve per-account paths.** All downstream CLIs (guardian, checklist, journal, decision log) MUST be invoked with per-account paths so account switches don't leak state. Use:
+
+  | Path | Value |
+  |---|---|
+  | `state_path` | `~/.trading-agent-skills/accounts/<account_id>/daily_state.json` |
+  | `spread_baseline_path` | `~/.trading-agent-skills/accounts/<account_id>/spread_baseline.json` |
+  | `journal_path` | `~/.trading-agent-skills/accounts/<account_id>/journal.jsonl` |
+  | `decisions_path` | `~/.trading-agent-skills/accounts/<account_id>/decisions.jsonl` |
+
+  Without these, the legacy global paths (`~/.trading-agent-skills/daily_state.json` etc.) are used and per-account state leaks. Subsequent steps reference "the per-account paths resolved in §1" instead of repeating them.
 
 ### 2. Verify broker
 
@@ -48,15 +58,32 @@ Run in order; first hit exits the tick.
 - **Sessions.** If charter.sessions_allowed is non-empty AND current session not in list → skip "session_closed".
 - **Markets.** For each instrument in resolved instrument list, call `mcp__mt5-mcp__get_market_hours`. If ALL closed → skip "all_markets_closed". Exit.
 
+**State paths for guardian / checklist:** when building the bundle JSON for `trading-agent-skills-guardian` or `trading-agent-skills-checklist`, set these fields to the per-account paths resolved in §1:
+
+- `"state_path": "~/.trading-agent-skills/accounts/<account_id>/daily_state.json"`
+- `"spread_baseline_path": "~/.trading-agent-skills/accounts/<account_id>/spread_baseline.json"`
+- `"journal_path": "~/.trading-agent-skills/accounts/<account_id>/journal.jsonl"`
+
+These paths isolate per-account state. Without them, the legacy global paths are used and account switches will leak state.
+
 ### 4. Manage open positions
+
+All decision-log writes in this section MUST pass `--decisions-path` to point at the per-account decision log resolved in §1. Example:
+
+```bash
+trading-agent-skills-journal decision write \
+  --decisions-path ~/.trading-agent-skills/accounts/<account_id>/decisions.jsonl
+```
+
+The `--decisions-path` flag is required by the CLI; omitting it produces an argparse error. The same flag applies to `decision write-outcome`. Subsequent steps reference "the decision-log path resolved in §1" rather than repeating the full invocation.
 
 - Call `mcp__mt5-mcp__get_positions`.
 - For each position:
   - Run `trading-agent-skills-price-action` on the position's primary timeframe.
   - Reasoning to act:
-    - **Structural invalidation** (level broken in opposite direction): close position. Write decision intent (kind=close), call `mcp__mt5-mcp__close_position`, write outcome.
+    - **Structural invalidation** (level broken in opposite direction): close position. Write decision intent (kind=close, via `decision write` against the decision-log path resolved in §1), call `mcp__mt5-mcp__close_position`, write outcome (via `decision write-outcome` against the same path).
     - **TP near**: hold (no log). Let the broker fill TP naturally.
-    - **SL trail warranted** (e.g., new HTF level above original SL): modify. Decision intent (kind=modify), `mcp__mt5-mcp__modify_order`, outcome.
+    - **SL trail warranted** (e.g., new HTF level above original SL): modify. Decision intent (kind=modify, via `decision write` against the decision-log path resolved in §1), `mcp__mt5-mcp__modify_order`, outcome (via `decision write-outcome`).
     - **No change warranted**: hold silently — no decision log.
 
 ### 5. Scan for new entries
@@ -75,9 +102,9 @@ Run in order; first hit exits the tick.
     - If checklist == WARN → agent decides. May proceed at half size; MUST log decision (open or skip) with reasoning.
     - If checklist == PASS:
       - Run `trading-agent-skills-size` with `risk_pct = charter.hard_caps.per_trade_risk_pct` (or half if guardian==CAUTION).
-      - **Write intent record FIRST** via `trading-agent-skills-journal decision write`.
+      - **Write intent record FIRST** via `trading-agent-skills-journal decision write --decisions-path <decision-log path resolved in §1>`.
       - Call `mcp__mt5-mcp__place_order` with the sized lot.
-      - Write outcome record via `trading-agent-skills-journal decision write-outcome`.
+      - Write outcome record via `trading-agent-skills-journal decision write-outcome --decisions-path <decision-log path resolved in §1>`.
 
 ### 6. End tick
 

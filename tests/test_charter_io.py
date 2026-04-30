@@ -2,12 +2,16 @@ from pathlib import Path
 
 import pytest
 
+from trading_agent_skills.account_paths import resolve_account_paths
 from trading_agent_skills.charter_io import (
     Charter,
     CharterError,
     HEARTBEAT_BY_STYLE,
     LOCKED_FIELDS,
     parse_charter,
+    render_charter,
+    write_charter,
+    write_charter_with_archive,
 )
 
 
@@ -130,3 +134,52 @@ def test_accepts_tab_indented_hard_caps() -> None:
     )
     c = parse_charter(tab_charter)
     assert c.hard_caps.per_trade_risk_pct == 1.0
+
+
+def test_render_charter_round_trips(tmp_path: Path) -> None:
+    c = parse_charter(_VALID_CHARTER)
+    rendered = render_charter(c)
+    assert "mode: demo" in rendered
+    assert "account_id: 12345678" in rendered
+    assert "heartbeat: 1h" in rendered
+    assert "per_trade_risk_pct: 1.0" in rendered
+    re_parsed = parse_charter(rendered)
+    assert re_parsed == c
+
+
+def test_write_charter_creates_file(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    c = parse_charter(_VALID_CHARTER)
+    write_charter(paths.charter, c)
+    assert paths.charter.is_file()
+    assert "mode: demo" in paths.charter.read_text(encoding="utf-8")
+
+
+def test_archive_old_before_overwrite(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    v1 = parse_charter(_VALID_CHARTER)
+    write_charter(paths.charter, v1)
+
+    v2_text = _VALID_CHARTER.replace("charter_version: 1", "charter_version: 2").replace(
+        "per_trade_risk_pct: 1.0", "per_trade_risk_pct: 0.8"
+    )
+    v2 = parse_charter(v2_text)
+    write_charter_with_archive(paths, v2)
+
+    assert (paths.charter_versions / "v1.md").is_file()
+    assert "per_trade_risk_pct: 1.0" in (paths.charter_versions / "v1.md").read_text(
+        encoding="utf-8"
+    )
+    assert "per_trade_risk_pct: 0.8" in paths.charter.read_text(encoding="utf-8")
+
+
+def test_archive_refuses_version_mismatch(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    v1 = parse_charter(_VALID_CHARTER)
+    write_charter(paths.charter, v1)
+    # Re-write at version 1 (no bump) — must refuse
+    with pytest.raises(CharterError, match="must increment"):
+        write_charter_with_archive(paths, v1)

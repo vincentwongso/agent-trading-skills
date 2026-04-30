@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
+from trading_agent_skills.account_paths import AccountPaths
+
 
 HEARTBEAT_BY_STYLE = {"scalp": "15m", "day": "1h", "swing": "4h"}
 ALLOWED_HEARTBEATS = {"5m", "10m", "15m", "30m", "1h", "2h", "4h"}
@@ -195,3 +197,49 @@ def _strip_quotes(raw: str) -> str:
     ):
         return raw[1:-1]
     return raw
+
+
+def render_charter(c: Charter) -> str:
+    """Render a Charter back to the YAML-like text format parse_charter consumes."""
+    sessions = "[" + ", ".join(f'"{s}"' for s in c.sessions_allowed) + "]" if c.sessions_allowed else "[]"
+    instruments = "[" + ", ".join(f'"{s}"' for s in c.instruments) + "]" if c.instruments else "[]"
+    setups = "[" + ", ".join(f'"{s}"' for s in c.allowed_setups) + "]" if c.allowed_setups else "[]"
+    return (
+        f"mode: {c.mode}\n"
+        f"account_id: {c.account_id}\n"
+        f"heartbeat: {c.heartbeat}\n"
+        f"hard_caps:\n"
+        f"  per_trade_risk_pct: {c.hard_caps.per_trade_risk_pct}\n"
+        f"  daily_loss_pct: {c.hard_caps.daily_loss_pct}\n"
+        f"  max_concurrent_positions: {c.hard_caps.max_concurrent_positions}\n"
+        f"charter_version: {c.charter_version}\n"
+        f"created_at: {c.created_at}\n"
+        f"created_account_balance: {c.created_account_balance}\n"
+        f"trading_style: {c.trading_style}\n"
+        f"sessions_allowed: {sessions}\n"
+        f"instruments: {instruments}\n"
+        f"allowed_setups: {setups}\n"
+        f'notes: "{c.notes}"\n'
+    )
+
+
+def write_charter(path: Path, c: Charter) -> None:
+    path.write_text(render_charter(c), encoding="utf-8")
+
+
+def write_charter_with_archive(paths: AccountPaths, new: Charter) -> None:
+    """Archive the current charter to charter_versions/v<N>.md, then overwrite.
+
+    Refuses if new.charter_version is not strictly greater than the current
+    on-disk version. Caller is responsible for bumping charter_version.
+    """
+    if paths.charter.is_file():
+        old = parse_charter(paths.charter.read_text(encoding="utf-8"))
+        if new.charter_version <= old.charter_version:
+            raise CharterError(
+                f"new charter must increment charter_version above {old.charter_version}, "
+                f"got {new.charter_version}"
+            )
+        archive_path = paths.charter_versions / f"v{old.charter_version}.md"
+        archive_path.write_text(render_charter(old), encoding="utf-8")
+    write_charter(paths.charter, new)

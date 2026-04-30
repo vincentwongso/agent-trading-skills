@@ -57,3 +57,31 @@ def _within(ts: Optional[str], since: datetime, until: datetime) -> bool:
         return False
     dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     return since <= dt < until
+
+
+def compute_setup_breakdown(
+    paths: AccountPaths,
+    *,
+    since: datetime,
+    until: datetime,
+) -> list[dict[str, Any]]:
+    """Group closed trades by setup_type, return list of {setup_type, wins, losses, pnl}."""
+    if not paths.journal.is_file():
+        return []
+    closed = [
+        e for e in read_resolved(paths.journal)
+        if _within(e.get("entry_time"), since, until) or _within(e.get("exit_time"), since, until)
+    ]
+    by_setup: dict[str, dict[str, Any]] = {}
+    for e in closed:
+        st = e.get("setup_type", "unknown")
+        bucket = by_setup.setdefault(st, {"setup_type": st, "wins": 0, "losses": 0, "pnl": Decimal("0")})
+        pnl = Decimal(e["realized_pnl"])
+        bucket["pnl"] += pnl
+        if pnl > 0:
+            bucket["wins"] += 1
+        elif pnl < 0:
+            bucket["losses"] += 1
+    return [
+        {**b, "pnl": format(b["pnl"], "f")} for b in by_setup.values()
+    ]

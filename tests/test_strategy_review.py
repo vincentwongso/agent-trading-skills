@@ -7,7 +7,10 @@ import pytest
 
 from trading_agent_skills.account_paths import resolve_account_paths
 from trading_agent_skills.journal_io import write_open
-from trading_agent_skills.strategy_review import compute_performance_summary
+from trading_agent_skills.strategy_review import (
+    compute_performance_summary,
+    compute_setup_breakdown,
+)
 
 
 def _seed_journal(path: Path, n_wins: int, n_losses: int) -> None:
@@ -77,3 +80,20 @@ def test_perf_summary_handles_empty_journal(tmp_path: Path) -> None:
     )
     assert summary["trades_closed"] == 0
     assert summary["win_rate"] is None
+
+
+def test_setup_breakdown_per_label(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    _seed_journal(paths.journal, n_wins=3, n_losses=2)
+    bd = compute_setup_breakdown(
+        paths,
+        since=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        until=datetime(2026, 5, 10, tzinfo=timezone.utc),
+    )
+    pin = next(b for b in bd if b["setup_type"] == "price_action:pin_bar")
+    fvg = next(b for b in bd if b["setup_type"] == "price_action:fvg_fill")
+    assert pin["wins"] == 3
+    assert pin["losses"] == 0
+    assert fvg["wins"] == 0
+    assert fvg["losses"] == 2

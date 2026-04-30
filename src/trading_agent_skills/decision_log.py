@@ -174,9 +174,20 @@ def _read_records(path: Path) -> Iterable[dict[str, Any]]:
 def reconcile_decisions(path: Path) -> Iterable[dict[str, Any]]:
     """Yield one merged record per (tick_id, kind, symbol).
 
-    Intent record is the base; outcome record (latest by ts) overrides
+    Intent record is the base; outcome record (latest by parsed ts) overrides
     execution dict and ticket. Orphan intents (no outcome yet) keep
     execution_status='pending'.
+
+    Semantics on edge cases:
+    - **Duplicate intents** (same (tick_id, kind, symbol)): the FIRST intent
+      written wins. Subsequent intents with the same key are presumed retries
+      and do not displace the canonical decision. The raw JSONL preserves all
+      records — only the reconciled view is deduplicated.
+    - **Orphan outcomes** (outcome with no matching intent): silently skipped
+      by the reconciler. They remain in the raw JSONL and can be inspected
+      directly. This is acceptable for v1 because orphan outcomes only arise
+      from bugs (intent failed-to-write but outcome ran) and the raw log is
+      the source of truth.
     """
     intents: dict[tuple[str, str, str], dict[str, Any]] = {}
     outcomes: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -184,10 +195,12 @@ def reconcile_decisions(path: Path) -> Iterable[dict[str, Any]]:
         key = (rec.get("tick_id"), rec.get("kind"), rec.get("symbol"))
         if rec.get("is_outcome"):
             existing = outcomes.get(key)
-            if existing is None or rec["ts"] > existing["ts"]:
+            if existing is None or _parse_ts(rec["ts"]) > _parse_ts(existing["ts"]):
                 outcomes[key] = rec
         else:
-            intents[key] = rec
+            # First-intent-wins: do not displace earlier canonical decision
+            if key not in intents:
+                intents[key] = rec
 
     for key, intent in intents.items():
         merged = dict(intent)
@@ -199,3 +212,8 @@ def reconcile_decisions(path: Path) -> Iterable[dict[str, Any]]:
             if outcome.get("ticket") is not None:
                 merged["ticket"] = outcome["ticket"]
         yield merged
+
+
+def _parse_ts(ts: str) -> datetime:
+    """Parse an ISO 8601 timestamp string. Accepts both '+00:00' and 'Z' suffixes."""
+    return datetime.fromisoformat(ts.replace("Z", "+00:00"))

@@ -257,3 +257,72 @@ def test_reconcile_orphan_intent_stays_pending(tmp_path: Path) -> None:
     )
     reconciled = list(reconcile_decisions(path))
     assert reconciled[0]["execution"]["execution_status"] == "pending"
+
+
+def test_reconcile_first_intent_wins_on_duplicate(tmp_path: Path) -> None:
+    """Duplicate intents on same (tick_id, kind, symbol) — first wins, retries don't displace."""
+    path = tmp_path / "decisions.jsonl"
+    write_intent(
+        path, kind="open", symbol="X", ticket=None, setup_type="x",
+        reasoning="first reason", skills_used=[],
+        guardian_status="CLEAR", checklist_verdict="PASS",
+        execution={"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                   "sl": "0.99", "tp": "1.02"},
+        charter_version=1, tick_id="2026-04-30T22:00:00Z",
+    )
+    # Same tick_id/kind/symbol, different reasoning (retry)
+    write_intent(
+        path, kind="open", symbol="X", ticket=None, setup_type="x",
+        reasoning="retry reason", skills_used=[],
+        guardian_status="CLEAR", checklist_verdict="PASS",
+        execution={"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                   "sl": "0.99", "tp": "1.02"},
+        charter_version=1, tick_id="2026-04-30T22:00:00Z",
+    )
+    reconciled = list(reconcile_decisions(path))
+    assert len(reconciled) == 1
+    assert reconciled[0]["reasoning"] == "first reason"
+
+
+def test_reconcile_handles_z_suffix_in_ts(tmp_path: Path) -> None:
+    """Reconciler must compare ts via parsed datetime, not lexicographic.
+
+    Manually craft two outcome records with different ts formats (Z vs +00:00)
+    that lexicographically would sort wrong but chronologically are unambiguous.
+    """
+    import json
+    path = tmp_path / "decisions.jsonl"
+    # Intent
+    write_intent(
+        path, kind="open", symbol="X", ticket=None, setup_type="x",
+        reasoning="r", skills_used=[],
+        guardian_status="CLEAR", checklist_verdict="PASS",
+        execution={"side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                   "sl": "0.99", "tp": "1.02"},
+        charter_version=1, tick_id="2026-04-30T22:00:00Z",
+    )
+    # Older outcome with Z suffix
+    older = {
+        "schema_version": 1,
+        "ts": "2026-04-30T22:00:01+00:00",  # earlier
+        "kind": "open", "symbol": "X", "ticket": 1,
+        "execution": {"execution_status": "rejected"},
+        "tick_id": "2026-04-30T22:00:00Z",
+        "is_outcome": True,
+    }
+    # Newer outcome
+    newer = {
+        "schema_version": 1,
+        "ts": "2026-04-30T22:00:02+00:00",  # later by 1 second
+        "kind": "open", "symbol": "X", "ticket": 99999,
+        "execution": {"execution_status": "filled"},
+        "tick_id": "2026-04-30T22:00:00Z",
+        "is_outcome": True,
+    }
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(older) + "\n")
+        f.write(json.dumps(newer) + "\n")
+    reconciled = list(reconcile_decisions(path))
+    assert len(reconciled) == 1
+    assert reconciled[0]["execution"]["execution_status"] == "filled"
+    assert reconciled[0]["ticket"] == 99999

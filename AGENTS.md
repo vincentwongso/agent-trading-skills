@@ -338,6 +338,73 @@ Fire one manual tick and check that a decision record (likely a
 
 ---
 
+## Demo→live runbook
+
+This is fired ONLY when the user explicitly says "switch <account_id> to
+live" (or equivalent). Never propose this — wait for the user to ask.
+
+### 1. Confirm prerequisites
+
+- A live MT5 account is configured in the user's terminal.
+- The demo account has at least 4 weekly strategy-review proposals in
+  `~/.trading-agent-skills/accounts/<account_id>/proposals/`. If not, warn
+  the user and ask if they're sure they want to skip the demo soak period.
+
+### 2. Show full context
+
+Read and present:
+
+- The current `charter.md` in full.
+- The last 4 weekly proposal files (summary lines from each).
+- All-time performance from `trading-agent-skills-journal stats`.
+- Current account balance via `get_account_info`.
+
+### 3. Single confirmation
+
+Ask exactly: "Confirm switching <account_id> to live trading? Reply 'yes'
+to proceed, anything else to cancel."
+
+If reply is anything other than `yes`, abort and confirm to the user that
+no change was made.
+
+### 4. Apply the flip
+
+If `yes`:
+
+- Archive current charter to `charter_versions/v<N>.md`.
+- Write new charter with `mode: live` and bumped `charter_version`.
+- Append a `mode_change` decision record to `decisions.jsonl` with
+  `reasoning="user-initiated demo→live: <user phrase>"`.
+
+```bash
+trading-agent-skills-journal decision write --decisions-path ~/.trading-agent-skills/accounts/<id>/decisions.jsonl <<'EOF'
+{
+  "kind": "mode_change",
+  "symbol": "*",
+  "ticket": null,
+  "setup_type": "system:mode_flip",
+  "reasoning": "user-initiated demo→live: <user phrase>",
+  "skills_used": [],
+  "guardian_status": "CLEAR",
+  "checklist_verdict": null,
+  "execution": null,
+  "charter_version": <new_version>,
+  "tick_id": "<current ISO UTC>"
+}
+EOF
+```
+
+### 5. Confirm to user
+
+Print: "Charter <id> is now in `live` mode. Heartbeat will operate on the
+live account starting next tick. To revert, say 'switch <id> back to demo'."
+
+### Reverse flow (live→demo)
+
+Same workflow, symmetric. No additional ceremony beyond the single confirm.
+
+---
+
 ## Troubleshooting
 
 - **`pip install -e .` fails on Python < 3.11** — the package requires 3.11+. Tell the user to upgrade Python.

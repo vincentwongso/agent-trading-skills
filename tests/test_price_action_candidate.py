@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.price_action.detectors import (
+from trading_agent_skills.price_action.detectors import (
     CandidateSetup,
     EntryZone,
     SetupType,

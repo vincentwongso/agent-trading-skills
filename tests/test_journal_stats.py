@@ -5,8 +5,8 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.journal_io import write_open
-from cfd_skills.journal_stats import (
+from trading_agent_skills.journal_io import write_open
+from trading_agent_skills.journal_stats import (
     by_setup_type,
     by_side,
     by_symbol,
@@ -218,7 +218,7 @@ def test_summary_over_journal_file(tmp_path):
         rationale="Long carry play.",
         risk_classification_at_close="LOCKED_PROFIT",
     )
-    from cfd_skills.journal_io import read_resolved
+    from trading_agent_skills.journal_io import read_resolved
     entries = read_resolved(journal)
     s = compute_summary(entries)
     assert s.count == 1

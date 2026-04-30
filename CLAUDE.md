@@ -1,30 +1,30 @@
-# agent-trading-skills — handover notes
+# trading-agent-skills — handover notes
 
-Reasoning-layer Claude Code skills for CFD day trading. Composes [`mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) (local broker access via MetaTrader 5) with [Calix](https://calix.fintrixmarkets.com) (economic + earnings calendar) and three news APIs (Finnhub / Marketaux / ForexNews).
+Reasoning-layer Claude Code skills for day trading. Composes [`mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) (local broker access via MetaTrader 5) with [Calix](https://calix.fintrixmarkets.com) (economic + earnings calendar) and three news APIs (Finnhub / Marketaux / ForexNews).
 
-The canonical design is `cfd-trading-skills-plan.md` — read it before making any architectural decision. Persistent context (build state, user trading setup, conventions) lives in `~/.claude/projects/C--projects-cfd-trading-skills/memory/` — read MEMORY.md for the index.
+The canonical design is `trading-agent-skills-plan.md` — read it before making any architectural decision. Persistent context (build state, user trading setup, conventions) lives in `~/.claude/projects/C--projects-trading-agent-skills/memory/` — read MEMORY.md for the index.
 
 ## Status (last updated 2026-04-29)
 
 All five skill bundles shipped on `main`:
-- ✅ `cfd-position-sizer` — lot sizing + margin cross-check + swap-aware output
+- ✅ `position-sizer` — lot sizing + margin cross-check + swap-aware output
 - ✅ `trade-journal` — append-only JSONL with R-multiple, swap-only P&L, swing-trade lens
 - ✅ `daily-risk-guardian` + `pre-trade-checklist` (paired) — NY-close session reset, LLM-judged AT_RISK predicate, Calix proximity, EWMA spread baseline
 - ✅ `session-news-brief` — 5-tier watchlist resolver, 3-API news fan-out + dedup, ATR/RSI swing candidates, Calix calendar overlay
-- ✅ `cfd-price-action` — hybrid classical + ICT structural reader, 9 detectors, structural quality scoring, hands off to checklist + sizer
+- ✅ `price-action` — hybrid classical + ICT structural reader, 9 detectors, structural quality scoring, hands off to checklist + sizer
 
 443 pytest cases passing in ~1.0s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`. End-to-end live broker smoke test still pending (user said "I will test everything all in one at the end").
 
 ## Architecture in one paragraph
 
-Skills don't make MCP calls. The agent (Claude Code) reads a SKILL.md, fans out MCP tool calls (`get_account_info`, `get_quote`, `get_symbols`, `calc_margin`, `get_history`, `get_positions`, `get_rates`), bundles outputs as JSON, pipes to `python -m cfd_skills.cli.<name>`, and renders the JSON result. The CLI calls a pure function in `src/cfd_skills/` that takes Decimal-typed inputs and returns a Decimal-typed result. Tests pass plain dicts through the same `from_mcp` constructors production code uses — no `unittest.mock`.
+Skills don't make MCP calls. The agent (Claude Code) reads a SKILL.md, fans out MCP tool calls (`get_account_info`, `get_quote`, `get_symbols`, `calc_margin`, `get_history`, `get_positions`, `get_rates`), bundles outputs as JSON, pipes to `python -m trading_agent_skills.cli.<name>`, and renders the JSON result. The CLI calls a pure function in `src/trading_agent_skills/` that takes Decimal-typed inputs and returns a Decimal-typed result. Tests pass plain dicts through the same `from_mcp` constructors production code uses — no `unittest.mock`.
 
 Decimal handling is strict: `decimal_io.D()` rejects floats at runtime; CLI serialises via `format(d, "f")` to avoid scientific notation. mt5-mcp's contract is "Decimal as string"; this repo preserves that boundary.
 
 ## Layout
 
 ```
-src/cfd_skills/        # pure-Python, Decimal-typed, no I/O at the package boundary
+src/trading_agent_skills/        # pure-Python, Decimal-typed, no I/O at the package boundary
   decimal_io.py        # D() coercion (rejects floats), floor_to_step, quantize_price
   symbol_meta.py       # currencies-of-interest mapping, conversion-pair derivation
   margin_calc.py       # EnCalcMode dispatch (ported 1:1 from cfd-claculator)
@@ -32,7 +32,7 @@ src/cfd_skills/        # pure-Python, Decimal-typed, no I/O at the package bound
   position_sizer.py    # skill 1 orchestrator
   journal_io.py        # skill 2 schema-versioned write/read with strict validation
   journal_stats.py     # skill 2 analytics
-  config_io.py         # skill 3 ~/.cfd-skills/config.toml read/write + defaults
+  config_io.py         # skill 3 ~/.trading-agent-skills/config.toml read/write + defaults
   daily_state.py       # skill 3 NY 4pm ET reset bookkeeping (zoneinfo, DST-safe)
   risk_state.py        # skill 3 Position dataclass + AT_RISK / RISK_FREE / LOCKED_PROFIT
   guardian.py          # skill 3 daily-risk-guardian orchestrator (CLEAR/CAUTION/HALT)
@@ -48,14 +48,14 @@ src/cfd_skills/        # pure-Python, Decimal-typed, no I/O at the package bound
                        # liquidity, context, scoring, schema, scan, detectors/{9 files}
   cli/{size,journal,guardian,checklist,news,price_action}.py
 .claude/skills/
-  cfd-position-sizer/SKILL.md + scripts/size.py
+  position-sizer/SKILL.md + scripts/size.py
   trade-journal/SKILL.md + scripts/journal.py
   daily-risk-guardian/SKILL.md + scripts/guardian.py
   pre-trade-checklist/SKILL.md + scripts/checklist.py
   session-news-brief/SKILL.md + scripts/news.py
-  cfd-price-action/SKILL.md + scripts/price_action.py
+  price-action/SKILL.md + scripts/price_action.py
 tests/                 # pytest, no live broker required
-~/.cfd-skills/         # runtime files (not committed):
+~/.trading-agent-skills/         # runtime files (not committed):
   journal.jsonl        # trade journal
   config.toml          # config; auto-defaults if missing
   daily_state.json     # NY-close session bookkeeping
@@ -77,7 +77,7 @@ A missing key produces a `MISSING_NEWS_API_KEY` flag and that provider is skippe
 The news CLI also auto-loads a `.env` file (zero-dep loader, `os.environ.setdefault` so real shell env wins). Search order:
 
 1. `--env-file <path>` if passed explicitly
-2. `~/.cfd-skills/.env` (preferred — survives across project locations)
+2. `~/.trading-agent-skills/.env` (preferred — survives across project locations)
 3. `./.env` (repo-local override)
 
 `.env.example` at the repo root is committed; `.env` is in `.gitignore`. PowerShell users prefer this over `export` (which is bash-only).
@@ -92,21 +92,21 @@ The news CLI also auto-loads a `.env` file (zero-dep loader, `os.environ.setdefa
 ./.venv/Scripts/python.exe -m pytest tests/ -q
 
 # Smoke-test position sizer
-echo '<bundle>' | python -m cfd_skills.cli.size
+echo '<bundle>' | python -m trading_agent_skills.cli.size
 
 # Smoke-test journal
-echo '<entry>' | cfd-skills-journal write --json
-cfd-skills-journal stats --group-by all
+echo '<entry>' | trading-agent-skills-journal write --json
+trading-agent-skills-journal stats --group-by all
 
 # Smoke-test guardian + checklist
-echo '<bundle>' | cfd-skills-guardian
-echo '<bundle>' | cfd-skills-checklist
+echo '<bundle>' | trading-agent-skills-guardian
+echo '<bundle>' | trading-agent-skills-checklist
 
 # Smoke-test news brief
-echo '<bundle>' | cfd-skills-news
+echo '<bundle>' | trading-agent-skills-news
 
 # Smoke-test price action
-echo '<bundle>' | cfd-skills-price-action
+echo '<bundle>' | trading-agent-skills-price-action
 ```
 
 ## Conventions to preserve
@@ -123,7 +123,7 @@ echo '<bundle>' | cfd-skills-price-action
 All five skills are now shipped. The plan's "Risk-tier classification" + "Acceptance criteria" sections list per-skill guarantees that the existing tests cover. Outstanding items:
 
 1. **Live-broker smoke test.** User said "I will test everything all in one at the end" — none of the five skills has been run against a live MT5 terminal yet. Next session should walk through:
-   - Configure `~/.cfd-skills/config.toml` (writes default if missing on first invocation)
+   - Configure `~/.trading-agent-skills/config.toml` (writes default if missing on first invocation)
    - Set `FINNHUB_API_KEY` / `MARKETAUX_API_KEY` / `FOREXNEWS_API_KEY` env vars (any missing keys are non-fatal but flagged)
    - Run each skill end-to-end with the MT5 terminal connected
 2. **Optional follow-ups** the plan flagged but didn't require for v1:

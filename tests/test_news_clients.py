@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.news_clients`` — Finnhub / Marketaux / ForexNews."""
+"""Tests for ``trading_agent_skills.news_clients`` — Finnhub / Marketaux / ForexNews."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cfd_skills.news_clients import (
+from trading_agent_skills.news_clients import (
     FinnhubClient,
     ForexNewsClient,
     MarketauxClient,

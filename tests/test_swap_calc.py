@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.swap_calc import (
+from trading_agent_skills.swap_calc import (
     UnsupportedSwapMode,
     daily_swap_per_lot_in_deposit_ccy,
     swap_for_nights,

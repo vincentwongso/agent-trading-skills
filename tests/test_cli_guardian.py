@@ -1,4 +1,4 @@
-"""End-to-end tests for ``cfd_skills.cli.guardian``."""
+"""End-to-end tests for ``trading_agent_skills.cli.guardian``."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cfd_skills.cli.guardian import main
+from trading_agent_skills.cli.guardian import main
 
 
 def _account(equity: str = "10000.00") -> dict:

@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.daily_state`` — NY-close session bookkeeping."""
+"""Tests for ``trading_agent_skills.daily_state`` — NY-close session bookkeeping."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cfd_skills.daily_state import (
+from trading_agent_skills.daily_state import (
     DailyState,
     compute_last_reset,
     compute_next_reset,

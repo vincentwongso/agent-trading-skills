@@ -1,10 +1,10 @@
-"""Tests for ``cfd_skills.news_dedup``."""
+"""Tests for ``trading_agent_skills.news_dedup``."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from cfd_skills.news_dedup import (
+from trading_agent_skills.news_dedup import (
     NewsArticle,
     canonicalise_url,
     classify_impact,

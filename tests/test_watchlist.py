@@ -1,10 +1,10 @@
-"""Tests for ``cfd_skills.watchlist`` — 5-tier resolver."""
+"""Tests for ``trading_agent_skills.watchlist`` — 5-tier resolver."""
 
 from __future__ import annotations
 
 import pytest
 
-from cfd_skills.watchlist import (
+from trading_agent_skills.watchlist import (
     calendar_driven_symbols,
     resolve_watchlist,
     symbols_for_currencies,

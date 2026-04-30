@@ -1,6 +1,6 @@
 ---
 name: trade-journal
-description: Use when the user wants to log a completed trade, add a post-trade reflection to a previous trade, or query their performance history (win rate, R-multiple, P&L by setup or symbol, swap-harvest performance). Triggers on phrases like "journal this trade", "log my last [symbol] trade", "show me my trade journal for [period]", "what's my win rate on [setup type]", "how much swap have I earned this month", "add a note to my last trade". Works on a local append-only JSONL at ~/.cfd-skills/journal.jsonl — never mutates broker state.
+description: Use when the user wants to log a completed trade, add a post-trade reflection to a previous trade, or query their performance history (win rate, R-multiple, P&L by setup or symbol, swap-harvest performance). Triggers on phrases like "journal this trade", "log my last [symbol] trade", "show me my trade journal for [period]", "what's my win rate on [setup type]", "how much swap have I earned this month", "add a note to my last trade". Works on a local append-only JSONL at ~/.trading-agent-skills/journal.jsonl — never mutates broker state.
 ---
 
 # Trade Journal
@@ -42,7 +42,7 @@ Do NOT invoke for live position questions — those go through `mt5-market-data`
 | `realized_pnl` | from closing `Deal.profit` (deposit ccy) |
 | `swap_accrued` | from closing `Deal.swap` (deposit ccy). Important: open positions don't expose swap reliably; pull from the closing deal. |
 | `commission` | from closing `Deal.commission` (deposit ccy; usually negative) |
-| `setup_type` | free-form tag. **Before writing, run `cfd-skills-journal tags` to load existing tags into context** and suggest "did you mean..." if the user types something close to one. |
+| `setup_type` | free-form tag. **Before writing, run `trading-agent-skills-journal tags` to load existing tags into context** and suggest "did you mean..." if the user types something close to one. |
 | `rationale` | one paragraph: why entered |
 | `risk_classification_at_close` | `AT_RISK`, `RISK_FREE`, or `LOCKED_PROFIT` (LLM-judged at close — see daily-risk-guardian; for the journal, ask the user or infer from SL position vs entry) |
 | `ticket` (optional) | MT5 deal ticket if known |
@@ -60,7 +60,7 @@ When the user says "journal my last UKOIL trade" without specifics:
 ### Write the entry
 
 ```bash
-echo '<bundle>' | cfd-skills-journal write --json
+echo '<bundle>' | trading-agent-skills-journal write --json
 ```
 
 The CLI prints the assigned UUID. Confirm to the user: "Logged entry `abc-123` — net P&L $635.50, R-multiple 7.94."
@@ -69,9 +69,9 @@ The CLI prints the assigned UUID. Confirm to the user: "Logged entry `abc-123` �
 
 User says "add a note to my last UKOIL trade":
 
-1. `cfd-skills-journal query --symbol UKOIL --period week` → list with UUIDs and exit_times
+1. `trading-agent-skills-journal query --symbol UKOIL --period week` → list with UUIDs and exit_times
 2. Identify the entry (most recent by `exit_time`, or ask user if ambiguous)
-3. `echo '{"uuid": "...", "outcome_notes": "..."}' | cfd-skills-journal update --json`
+3. `echo '{"uuid": "...", "outcome_notes": "..."}' | trading-agent-skills-journal update --json`
 
 Patchable fields: `setup_type`, `rationale`, `risk_classification_at_close`, `outcome_notes`. Other fields are immutable — they describe the trade as it actually happened.
 
@@ -80,7 +80,7 @@ Patchable fields: `setup_type`, `rationale`, `risk_classification_at_close`, `ou
 ### List entries
 
 ```bash
-cfd-skills-journal query [--period today|week|month|all] [--symbol X] [--setup-type T] [--side buy|sell] [--swing-only]
+trading-agent-skills-journal query [--period today|week|month|all] [--symbol X] [--setup-type T] [--side buy|sell] [--swing-only]
 ```
 
 Output: JSON `{count, entries: [...]}`. Render to the user with key fields per row.
@@ -88,7 +88,7 @@ Output: JSON `{count, entries: [...]}`. Render to the user with key fields per r
 ### Performance summary
 
 ```bash
-cfd-skills-journal stats [filters] [--group-by setup_type|symbol|side|risk_classification|all] [--swing-only]
+trading-agent-skills-journal stats [filters] [--group-by setup_type|symbol|side|risk_classification|all] [--swing-only]
 ```
 
 The summary carries:
@@ -106,7 +106,7 @@ Win rate definition: a "win" means **net trade outcome > 0** (realized + swap + 
 
 ### Tag suggestions
 
-Before any `write`, call `cfd-skills-journal tags`. It returns existing setup_type values sorted by frequency. Use these to:
+Before any `write`, call `trading-agent-skills-journal tags`. It returns existing setup_type values sorted by frequency. Use these to:
 - Suggest reusing an existing tag if the user proposes a new one that's a near-typo (e.g. "pullback-lng" when "pullback-long" already exists 6 times)
 - Pre-populate a dropdown of recent tags in the entry confirmation prompt
 

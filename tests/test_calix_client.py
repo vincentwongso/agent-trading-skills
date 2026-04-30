@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.calix_client`` — uses httpx MockTransport, no network."""
+"""Tests for ``trading_agent_skills.calix_client`` — uses httpx MockTransport, no network."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from cfd_skills.calix_client import (
+from trading_agent_skills.calix_client import (
     CalixClient,
     CalixUnavailable,
 )

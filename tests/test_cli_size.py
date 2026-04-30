@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.cli.size import main
+from trading_agent_skills.cli.size import main
 
 
 def _bundle(**request_overrides) -> dict:

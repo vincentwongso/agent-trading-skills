@@ -61,7 +61,7 @@ When uncertain → AT_RISK. The user can manually override in the journal afterw
 }
 ```
 
-Optional override paths (used by tests; defaults to `~/.cfd-skills/{config.toml,daily_state.json}`):
+Optional override paths (used by tests; defaults to `~/.trading-agent-skills/{config.toml,daily_state.json}`):
 
 ```json
 { "config_path": "/path/to/config.toml", "state_path": "/path/to/state.json" }
@@ -70,10 +70,10 @@ Optional override paths (used by tests; defaults to `~/.cfd-skills/{config.toml,
 ## Run
 
 ```bash
-echo '<bundle>' | python -m cfd_skills.cli.guardian
+echo '<bundle>' | python -m trading_agent_skills.cli.guardian
 ```
 
-Or via the entry point: `cfd-skills-guardian`.
+Or via the entry point: `trading-agent-skills-guardian`.
 
 ## Reading the result
 
@@ -132,5 +132,5 @@ When status == HALT, lead with the explicit "no new entries today" sentence. Whe
 - **Naive datetime in `now_utc`** — the bundle must carry tz-aware UTC. The CLI rejects naive values.
 - **Closing-deal P&L attribution.** mt5 reports `profit`, `swap`, and `commission` as separate fields on each deal. Sum all three for the cash that actually hit the account.
 - **Holiday gaps in get_history.** If the last reset was Friday 4pm ET and now is Monday 9am ET, weekend swap will appear in history-window deals. That's correct — Friday's 3x swap charge is realized cash.
-- **First-call session_open.** If `~/.cfd-skills/daily_state.json` doesn't exist, the first guardian call records the *current* equity as session-open and reports `session_just_reset: true`. That's expected. Don't run guardian for the first time mid-drawdown unless you intend to anchor the session at that point.
+- **First-call session_open.** If `~/.trading-agent-skills/daily_state.json` doesn't exist, the first guardian call records the *current* equity as session-open and reports `session_just_reset: true`. That's expected. Don't run guardian for the first time mid-drawdown unless you intend to anchor the session at that point.
 - **Risk-free predicate is LLM-judged, not a fixed math rule.** Take the time to actually evaluate each open position before classifying — the math is downstream of the classification. A wrong RISK_FREE call hides real exposure from the cap.

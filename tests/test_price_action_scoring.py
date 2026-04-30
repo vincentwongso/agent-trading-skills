@@ -6,8 +6,8 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.price_action.detectors import CandidateSetup, EntryZone
-from cfd_skills.price_action.scoring import (
+from trading_agent_skills.price_action.detectors import CandidateSetup, EntryZone
+from trading_agent_skills.price_action.scoring import (
     DEFAULT_WEIGHTS,
     ScoringWeights,
     score_candidate,

@@ -18,7 +18,7 @@ Trigger phrases:
 - "is it safe to enter [symbol] now"
 - "should I take [symbol] short here"
 
-Don't invoke for general market-data questions (`mt5-market-data`) or for sizing questions (use [`cfd-position-sizer`](../cfd-position-sizer/SKILL.md) first to get a candidate `risk_pct`, then this skill to gate the entry).
+Don't invoke for general market-data questions (`mt5-market-data`) or for sizing questions (use [`position-sizer`](../position-sizer/SKILL.md) first to get a candidate `risk_pct`, then this skill to gate the entry).
 
 ## Inputs
 
@@ -87,10 +87,10 @@ If Calix is unreachable or returns 5xx, treat as `economic_stale: true` (the che
 ### 5. Run the checklist
 
 ```bash
-echo '<bundle>' | python -m cfd_skills.cli.checklist
+echo '<bundle>' | python -m trading_agent_skills.cli.checklist
 ```
 
-Or via entry point: `cfd-skills-checklist`.
+Or via entry point: `trading-agent-skills-checklist`.
 
 ### 6. Render the result
 
@@ -142,7 +142,7 @@ When verdict is WARN with calix_stale → say so explicitly: "Calix calendar is 
 
 ## Common pitfalls
 
-- **Currency mapping for indices.** Use `_INDEX_TO_CURRENCIES` (in `cfd_skills.symbol_meta`) — NAS100 hits on USD news but not EUR; UKOIL hits on USD AND GBP. Send the union of relevant currencies as the `currencies` Calix filter.
+- **Currency mapping for indices.** Use `_INDEX_TO_CURRENCIES` (in `trading_agent_skills.symbol_meta`) — NAS100 hits on USD news but not EUR; UKOIL hits on USD AND GBP. Send the union of relevant currencies as the `currencies` Calix filter.
 - **Calix stale isn't always Calix's fault.** If Cloudflare KV refresh hasn't completed (e.g. DataPilot is rate-limited upstream), `stale: true` means "the data is older than freshness budget" — use it. The downstream WARN ensures the user doesn't take an entry assuming clean news data when there isn't any.
 - **Same-symbol overlap is `WARN`, not `BLOCK`.** Stacking the same trade is a discipline call, not a hard rule. Surface the existing tickets so the user can decide.
 - **Spread baseline cold-start.** First call for a symbol has no baseline → PASS with bootstrap reason. Don't WARN — the user hasn't given the EWMA enough samples to learn yet.

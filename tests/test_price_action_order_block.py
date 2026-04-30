@@ -1,12 +1,12 @@
-"""Tests for ``cfd_skills.price_action.order_block`` — OB detection."""
+"""Tests for ``trading_agent_skills.price_action.order_block`` — OB detection."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.indicators import Bar
-from cfd_skills.price_action.order_block import OrderBlock, detect_order_blocks
+from trading_agent_skills.indicators import Bar
+from trading_agent_skills.price_action.order_block import OrderBlock, detect_order_blocks
 
 
 def _bar(i: int, o: str, h: str, l: str, c: str) -> Bar:

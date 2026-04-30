@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.indicators import Bar
-from cfd_skills.price_action.bars import MTFBars
-from cfd_skills.price_action.context import build_context
-from cfd_skills.price_action.detectors.sr_bounce import detect
+from trading_agent_skills.indicators import Bar
+from trading_agent_skills.price_action.bars import MTFBars
+from trading_agent_skills.price_action.context import build_context
+from trading_agent_skills.price_action.detectors.sr_bounce import detect
 
 
 def _bar(i: int, o: str, h: str, l: str, c: str) -> Bar:

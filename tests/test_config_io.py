@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.config_io``."""
+"""Tests for ``trading_agent_skills.config_io``."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cfd_skills.config_io import (
+from trading_agent_skills.config_io import (
     SCHEMA_VERSION,
     Config,
     default_config,
@@ -44,7 +44,7 @@ def test_load_missing_file_returns_defaults(tmp_path: Path) -> None:
 
 def test_load_missing_file_with_auto_write_persists_defaults(tmp_path: Path) -> None:
     """The CLIs opt into auto-write so the user has a file to customize.
-    Regression guard for the smoke-test bug where ``~/.cfd-skills/config.toml``
+    Regression guard for the smoke-test bug where ``~/.trading-agent-skills/config.toml``
     was never created on first invocation."""
     target = tmp_path / "subdir" / "config.toml"  # parent dir absent too
     cfg = load_config(target, write_default_if_missing=True)
@@ -115,10 +115,10 @@ def test_load_config_coerces_int_pct_to_decimal(tmp_path: Path) -> None:
 
 
 def test_default_config_path_is_under_home_dotdir() -> None:
-    from cfd_skills.config_io import DEFAULT_CONFIG_PATH
+    from trading_agent_skills.config_io import DEFAULT_CONFIG_PATH
 
     assert DEFAULT_CONFIG_PATH.name == "config.toml"
-    assert DEFAULT_CONFIG_PATH.parent.name == ".cfd-skills"
+    assert DEFAULT_CONFIG_PATH.parent.name == ".trading-agent-skills"
 
 
 def test_config_is_immutable() -> None:

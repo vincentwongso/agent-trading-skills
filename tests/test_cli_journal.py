@@ -1,4 +1,4 @@
-"""End-to-end CLI test for cfd-skills-journal subcommands."""
+"""End-to-end CLI test for trading-agent-skills-journal subcommands."""
 
 import io
 import json
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from cfd_skills.cli.journal import main
+from trading_agent_skills.cli.journal import main
 
 
 def _open_payload(**overrides) -> dict:

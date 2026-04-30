@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.indicators import Bar
-from cfd_skills.price_action.bars import MTFBars
-from cfd_skills.price_action.context import (
+from trading_agent_skills.indicators import Bar
+from trading_agent_skills.price_action.bars import MTFBars
+from trading_agent_skills.price_action.context import (
     ScanContext,
     TFContext,
     build_context,

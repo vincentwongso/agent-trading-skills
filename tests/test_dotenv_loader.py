@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cfd_skills.dotenv_loader import load_env_file
+from trading_agent_skills.dotenv_loader import load_env_file
 
 
 @pytest.fixture

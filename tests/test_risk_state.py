@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.risk_state`` — Position dataclass + risk math."""
+"""Tests for ``trading_agent_skills.risk_state`` — Position dataclass + risk math."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.risk_state import (
+from trading_agent_skills.risk_state import (
     Classification,
     Position,
     at_risk_loss,

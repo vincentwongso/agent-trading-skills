@@ -1,4 +1,4 @@
-"""End-to-end tests for ``cfd_skills.cli.news``."""
+"""End-to-end tests for ``trading_agent_skills.cli.news``."""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from cfd_skills.cli.news import (
+from trading_agent_skills.cli.news import (
     _derive_currencies_from_meta,
     _derive_currencypairs_from_meta,
     _is_equity_like_ticker,
     main,
 )
-from cfd_skills.news_brief import SymbolMeta
+from trading_agent_skills.news_brief import SymbolMeta
 from decimal import Decimal
 
 

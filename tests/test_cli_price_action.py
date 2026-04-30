@@ -1,4 +1,4 @@
-"""Tests for the cfd-skills-price-action CLI shim."""
+"""Tests for the trading-agent-skills-price-action CLI shim."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.cli.price_action import main
+from trading_agent_skills.cli.price_action import main
 
 
 def _bar_blob(i: int, h: str, l: str, o: str, c: str) -> dict:

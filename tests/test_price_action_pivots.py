@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.price_action.pivots`` — fractal pivot detection."""
+"""Tests for ``trading_agent_skills.price_action.pivots`` — fractal pivot detection."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.indicators import Bar
-from cfd_skills.price_action.pivots import (
+from trading_agent_skills.indicators import Bar
+from trading_agent_skills.price_action.pivots import (
     Pivot,
     PivotKind,
     classify_sequence,

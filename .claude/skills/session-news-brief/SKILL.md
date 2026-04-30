@@ -62,7 +62,7 @@ The CLI fetches news itself if the bundle omits the `news` key — this lets the
 
 API keys never live in `config.toml`. A missing key for one provider doesn't block the others — the brief surfaces a `MISSING_NEWS_API_KEY` flag and per-provider health status so the user knows which sources contributed.
 
-The CLI also auto-loads a `.env` file. Search order: `--env-file <path>` if passed → `~/.cfd-skills/.env` → `./.env` (CWD). Real shell env vars always win. `.env.example` at the repo root is the template; `.env` is gitignored. This is the recommended path on Windows / PowerShell, where bash `export` doesn't apply.
+The CLI also auto-loads a `.env` file. Search order: `--env-file <path>` if passed → `~/.trading-agent-skills/.env` → `./.env` (CWD). Real shell env vars always win. `.env.example` at the repo root is the template; `.env` is gitignored. This is the recommended path on Windows / PowerShell, where bash `export` doesn't apply.
 
 If you've already fetched the news upstream (e.g. you ran the providers in parallel via a custom script), pre-fill `news.articles_by_provider` + `news.provider_status` in the bundle to skip the in-CLI fan-out.
 
@@ -105,10 +105,10 @@ If you've already fetched the news upstream (e.g. you ran the providers in paral
 ### 5. Run the brief
 
 ```bash
-echo '<bundle>' | python -m cfd_skills.cli.news
+echo '<bundle>' | python -m trading_agent_skills.cli.news
 ```
 
-Or via entry point: `cfd-skills-news`.
+Or via entry point: `trading-agent-skills-news`.
 
 ### 6. Render
 
@@ -183,5 +183,5 @@ Morning brief — 5 symbols watched
 - **Swap rates must come from the broker.** Don't paraphrase from news — ask `get_symbols` and pass the raw `swap_long` / `swap_short` Decimals. The "+$125/lot/night" claim in a UKOIL thesis is only credible if it matches the broker's actual swap rate at the time of the brief.
 - **Indicator math needs at least 21 D1 bars** (RSI(14) needs 15, EMA(20) needs 20). Pull `get_rates(D1, 30)` for safety. Lower-timeframe ATR/RSI are not used here — the swing-candidates section is intentionally a daily-bar lens.
 - **Dedup across providers** uses URL canonicalisation first (strips `utm_*`, `fbclid`, normalises host/scheme), then headline Levenshtein ratio (default 0.85). Same Reuters story syndicated by Yahoo collapses to one row with both sources listed.
-- **Cache TTL is 60s** for both Calix and news fan-out. Re-running the brief within 60s returns cached data — fine for "show me again" follow-ups, suspicious if the user expects fresh post-FOMC data. Bypass by deleting `~/.cfd-skills/news_cache/` and `~/.cfd-skills/calix_cache/`.
+- **Cache TTL is 60s** for both Calix and news fan-out. Re-running the brief within 60s returns cached data — fine for "show me again" follow-ups, suspicious if the user expects fresh post-FOMC data. Bypass by deleting `~/.trading-agent-skills/news_cache/` and `~/.trading-agent-skills/calix_cache/`.
 - **No execution.** This skill never calls a mutating MCP tool. Surfacing a swing candidate is not a recommendation to enter — route through `pre-trade-checklist` for the discipline gates.

@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.margin_calc import (
+from trading_agent_skills.margin_calc import (
     MissingMarginInput,
     UnsupportedCalcMode,
     apply_margin_rate,

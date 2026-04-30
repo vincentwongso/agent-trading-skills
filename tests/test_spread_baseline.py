@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.spread_baseline`` — EWMA + on-disk persistence."""
+"""Tests for ``trading_agent_skills.spread_baseline`` — EWMA + on-disk persistence."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from cfd_skills.spread_baseline import (
+from trading_agent_skills.spread_baseline import (
     DEFAULT_ALPHA,
     Baseline,
     BaselineStore,

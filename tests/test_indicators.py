@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.indicators`` — Wilder ATR/RSI + standard EMA."""
+"""Tests for ``trading_agent_skills.indicators`` — Wilder ATR/RSI + standard EMA."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.indicators import (
+from trading_agent_skills.indicators import (
     Bar,
     InsufficientBars,
     atr,

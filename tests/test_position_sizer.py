@@ -8,7 +8,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.position_sizer import (
+from trading_agent_skills.position_sizer import (
     AccountInfo,
     Quote,
     SizingRequest,
@@ -172,7 +172,7 @@ def test_short_with_explicit_stop_price():
 
 
 def test_long_with_stop_distance_in_price_units():
-    """Round-2 hand-off contract: cfd-price-action emits ``stop_distance``
+    """Round-2 hand-off contract: price-action emits ``stop_distance``
     (price units, e.g. ``"0.0020"`` on EURUSD = 20 pips). Sizer should
     accept it and convert internally to points using tick_size."""
     # 0.0020 / tick_size 0.00001 = 200 points.

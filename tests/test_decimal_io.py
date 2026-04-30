@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.decimal_io import D, floor_to_step, quantize_price
+from trading_agent_skills.decimal_io import D, floor_to_step, quantize_price
 
 
 class TestD:

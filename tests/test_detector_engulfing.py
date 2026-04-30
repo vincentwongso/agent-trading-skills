@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.indicators import Bar
-from cfd_skills.price_action.detectors.engulfing import is_bullish_engulfing, is_bearish_engulfing
+from trading_agent_skills.indicators import Bar
+from trading_agent_skills.price_action.detectors.engulfing import is_bullish_engulfing, is_bearish_engulfing
 
 
 def _bar(i: int, o: str, h: str, l: str, c: str) -> Bar:

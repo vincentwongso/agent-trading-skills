@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.indicators import Bar
-from cfd_skills.price_action.bars import MTFBars
-from cfd_skills.price_action.context import build_context
-from cfd_skills.price_action.detectors.pullback_ema import detect
+from trading_agent_skills.indicators import Bar
+from trading_agent_skills.price_action.bars import MTFBars
+from trading_agent_skills.price_action.context import build_context
+from trading_agent_skills.price_action.detectors.pullback_ema import detect
 
 
 def _trend_up_bars(n: int = 80) -> list[Bar]:

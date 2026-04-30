@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.price_action.structure`` — S/R, regime, MTF alignment."""
+"""Tests for ``trading_agent_skills.price_action.structure`` — S/R, regime, MTF alignment."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from decimal import Decimal
 
 import pytest
 
-from cfd_skills.price_action.pivots import Pivot
-from cfd_skills.price_action.structure import (
+from trading_agent_skills.price_action.pivots import Pivot
+from trading_agent_skills.price_action.structure import (
     MTFAlignment,
     RegimeKind,
     SRLevel,

@@ -1,4 +1,4 @@
-"""End-to-end tests for ``cfd_skills.cli.checklist``."""
+"""End-to-end tests for ``trading_agent_skills.cli.checklist``."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from cfd_skills.cli.checklist import main
+from trading_agent_skills.cli.checklist import main
 
 
 def _bundle(tmp_path: Path, **overrides) -> dict:

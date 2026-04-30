@@ -1,6 +1,6 @@
 """symbol_meta: currency-of-interest mapping + conversion-pair derivation."""
 
-from cfd_skills.symbol_meta import (
+from trading_agent_skills.symbol_meta import (
     conversion_pair,
     currencies_of_interest,
     is_fx_pair,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.price_action.scan import ScanInput, scan
+from trading_agent_skills.price_action.scan import ScanInput, scan
 
 
 def _bar_blob(i: int, h: str, l: str, o: str, c: str) -> dict:

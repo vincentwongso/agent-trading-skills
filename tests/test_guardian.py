@@ -1,4 +1,4 @@
-"""Tests for ``cfd_skills.guardian.assess`` — daily risk verdict logic."""
+"""Tests for ``trading_agent_skills.guardian.assess`` — daily risk verdict logic."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from cfd_skills.config_io import default_config
-from cfd_skills.guardian import (
+from trading_agent_skills.config_io import default_config
+from trading_agent_skills.guardian import (
     AccountSnapshot,
     GuardianInput,
     assess,
 )
-from cfd_skills.risk_state import Position
+from trading_agent_skills.risk_state import Position
 
 
 def _account(**overrides: Any) -> AccountSnapshot:

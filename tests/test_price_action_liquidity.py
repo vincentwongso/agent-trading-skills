@@ -1,12 +1,12 @@
-"""Tests for ``cfd_skills.price_action.liquidity`` — BSL/SSL pools."""
+"""Tests for ``trading_agent_skills.price_action.liquidity`` — BSL/SSL pools."""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from cfd_skills.price_action.liquidity import LiquidityPool, derive_liquidity_pools
-from cfd_skills.price_action.pivots import Pivot
+from trading_agent_skills.price_action.liquidity import LiquidityPool, derive_liquidity_pools
+from trading_agent_skills.price_action.pivots import Pivot
 
 
 def _piv(i: int, price: str, kind: str) -> Pivot:

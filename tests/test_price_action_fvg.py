@@ -1,12 +1,12 @@
-"""Tests for ``cfd_skills.price_action.fvg`` — three-bar FVG detection."""
+"""Tests for ``trading_agent_skills.price_action.fvg`` — three-bar FVG detection."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.indicators import Bar
-from cfd_skills.price_action.fvg import FVG, detect_fvgs
+from trading_agent_skills.indicators import Bar
+from trading_agent_skills.price_action.fvg import FVG, detect_fvgs
 
 
 def _bar(i: int, o: str, h: str, l: str, c: str) -> Bar:

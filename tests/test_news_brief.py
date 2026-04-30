@@ -1,19 +1,19 @@
-"""Tests for ``cfd_skills.news_brief.build``."""
+"""Tests for ``trading_agent_skills.news_brief.build``."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.checklist import CalixEarningsEntry, CalixEconomicEvent
-from cfd_skills.indicators import Bar
-from cfd_skills.news_brief import (
+from trading_agent_skills.checklist import CalixEarningsEntry, CalixEconomicEvent
+from trading_agent_skills.indicators import Bar
+from trading_agent_skills.news_brief import (
     NewsBriefInput,
     SymbolMeta,
     build,
 )
-from cfd_skills.news_dedup import NewsArticle, canonicalise_url
-from cfd_skills.watchlist import resolve_watchlist
+from trading_agent_skills.news_dedup import NewsArticle, canonicalise_url
+from trading_agent_skills.watchlist import resolve_watchlist
 
 
 # ---------- Builders --------------------------------------------------------

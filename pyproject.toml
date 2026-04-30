@@ -1,7 +1,7 @@
 [project]
-name = "cfd-skills"
+name = "trading-agent-skills"
 version = "0.1.0"
-description = "Reasoning-layer Claude Code skills for CFD day trading on top of mt5-mcp."
+description = "Reasoning-layer Claude Code skills for day trading on top of mt5-mcp."
 authors = [{ name = "Vincent" }]
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -18,19 +18,19 @@ dev = [
 ]
 
 [project.scripts]
-cfd-skills-size = "cfd_skills.cli.size:main"
-cfd-skills-journal = "cfd_skills.cli.journal:main"
-cfd-skills-guardian = "cfd_skills.cli.guardian:main"
-cfd-skills-checklist = "cfd_skills.cli.checklist:main"
-cfd-skills-news = "cfd_skills.cli.news:main"
-cfd-skills-price-action = "cfd_skills.cli.price_action:main"
+trading-agent-skills-size = "trading_agent_skills.cli.size:main"
+trading-agent-skills-journal = "trading_agent_skills.cli.journal:main"
+trading-agent-skills-guardian = "trading_agent_skills.cli.guardian:main"
+trading-agent-skills-checklist = "trading_agent_skills.cli.checklist:main"
+trading-agent-skills-news = "trading_agent_skills.cli.news:main"
+trading-agent-skills-price-action = "trading_agent_skills.cli.price_action:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/cfd_skills"]
+packages = ["src/trading_agent_skills"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

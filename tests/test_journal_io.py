@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cfd_skills.journal_io import (
+from trading_agent_skills.journal_io import (
     SCHEMA_VERSION,
     SchemaError,
     filter_resolved,

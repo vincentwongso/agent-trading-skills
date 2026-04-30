@@ -1,11 +1,11 @@
-"""Tests for ``cfd_skills.checklist`` — pre-trade gating verdict."""
+"""Tests for ``trading_agent_skills.checklist`` — pre-trade gating verdict."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from cfd_skills.checklist import (
+from trading_agent_skills.checklist import (
     CalixEarningsEntry,
     CalixEconomicEvent,
     ChecklistInput,
@@ -13,10 +13,10 @@ from cfd_skills.checklist import (
     SymbolContext,
     assess,
 )
-from cfd_skills.config_io import default_config
-from cfd_skills.guardian import GuardianResult
-from cfd_skills.risk_state import Position
-from cfd_skills.spread_baseline import Baseline
+from trading_agent_skills.config_io import default_config
+from trading_agent_skills.guardian import GuardianResult
+from trading_agent_skills.risk_state import Position
+from trading_agent_skills.spread_baseline import Baseline
 
 
 # ---------- Builders -------------------------------------------------------

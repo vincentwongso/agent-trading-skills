@@ -1,18 +1,281 @@
 # trading-agent-skills
 
-Reasoning-layer Claude Code skills for day trading on top of [`mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) and [Calix](https://calix.fintrixmarkets.com).
+Reasoning-layer agent skills for day trading on top of [`mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) (live MetaTrader 5 access) and [Calix](https://calix.fintrixmarkets.com) (economic + earnings calendar).
 
-Five skills (all shipped — start with whichever fits the moment):
+Six skills, all read-only / advisory — none of them mutate broker state. Execution stays behind your existing `mt5-trading` consent flow.
 
-1. **`position-sizer`** — Computes lot size for a target risk %, with broker-authoritative margin cross-check and swap-aware output.
-2. **`daily-risk-guardian` + `pre-trade-checklist`** — Track today's P&L vs. configurable cap (NY 4pm ET reset), gate new trades against news / session / exposure / spread.
-3. **`trade-journal`** — Append-only JSONL journal of completed trades with R-multiple, swap-accrued, and post-trade reflection.
-4. **`session-news-brief`** — Dynamic watchlist + Calix calendar overlay + 3-API news fan-out + swing-candidates section (positive carry × technical extremes).
-5. **`price-action`** — Hybrid classical + ICT structural reader. Per-TF pivots / S/R / FVGs / order blocks / liquidity pools / EMA stack / regime, plus 9 setup detectors (pullback-EMA, S/R bounce, pin bar, engulfing, range break+retest, FVG fill, OB retest, liq sweep, BOS pullback) ranked by deterministic structural quality score; LLM picks the chosen candidate and hands off to `pre-trade-checklist` + `position-sizer`.
+| # | Skill | What it does |
+|---|---|---|
+| 1 | **`position-sizer`** | Lot size for a target risk %, with broker-authoritative margin cross-check and swap-aware output. |
+| 2 | **`trade-journal`** | Append-only JSONL of completed trades + R-multiple / swap-only P&L analytics. |
+| 3 | **`daily-risk-guardian`** | Today's P&L vs. daily cap (NY 4pm ET reset). Worst-case drawdown across AT_RISK / RISK_FREE / LOCKED_PROFIT positions. |
+| 4 | **`pre-trade-checklist`** | Composes guardian + Calix proximity + session + exposure + spread baseline → PASS / WARN / BLOCK. |
+| 5 | **`session-news-brief`** | Dynamic watchlist + Calix overlay + 3-API news fan-out (Finnhub / Marketaux / ForexNews) + swing candidates. |
+| 6 | **`price-action`** | Hybrid classical + ICT structural reader. 9 setup detectors; ranked candidates hand off to `pre-trade-checklist` + `position-sizer`. |
 
-None of the skills mutate broker state — they advise, gate, or record. All execution stays behind `mt5-trading`'s existing consent flow.
+See [`trading-agent-skills-plan.md`](trading-agent-skills-plan.md) for the original design and [`docs/superpowers/specs/`](docs/superpowers/specs/) for per-skill specs.
 
-See [`trading-agent-skills-plan.md`](trading-agent-skills-plan.md) for the original design, and [`docs/superpowers/specs/`](docs/superpowers/specs/) for per-skill specs.
+---
+
+## Prerequisites
+
+Common to every skill:
+
+- **Python 3.11+** (the package targets 3.11; the dev env uses 3.14).
+- **A pip-installable copy of this repo** so the CLI entry points (`trading-agent-skills-size`, etc.) resolve on `PATH`. The skill `SKILL.md` files invoke them by name.
+
+Per-skill extras:
+
+| Skill | Needs `mt5-mcp` | Needs Calix | Needs news API keys |
+|---|---|---|---|
+| `position-sizer` | ✅ required | — | — |
+| `trade-journal` | optional (auto-populate from `get_history`) | — | — |
+| `daily-risk-guardian` | ✅ required | — | — |
+| `pre-trade-checklist` | ✅ required | ✅ required | — |
+| `session-news-brief` | ✅ required (positions / rates / symbols) | ✅ required | ✅ at least one of three |
+| `price-action` | ✅ required | — | — |
+
+`mt5-mcp` is a separate project — install it independently; this repo only consumes its tool outputs as JSON. See [`vincentwongso/mt5-mcp`](https://github.com/vincentwongso/mt5-mcp) for setup. The skills here are deliberately decoupled: the agent fans out MCP calls, bundles the results, and pipes them into a local CLI. No Python code in this repo imports an MCP client.
+
+---
+
+## 1. Install the Python package
+
+```bash
+git clone https://github.com/vincentwongso/agent-trading-skills.git
+cd agent-trading-skills
+
+python -m venv .venv
+.venv/Scripts/activate         # Windows
+# source .venv/bin/activate    # macOS / Linux
+
+pip install -e ".[dev]"
+pytest                         # ~440 tests, ~1s — confirms the install works
+```
+
+This registers six CLI entry points on `PATH`:
+
+| Skill | Entry point |
+|---|---|
+| `position-sizer` | `trading-agent-skills-size` |
+| `trade-journal` | `trading-agent-skills-journal` |
+| `daily-risk-guardian` | `trading-agent-skills-guardian` |
+| `pre-trade-checklist` | `trading-agent-skills-checklist` |
+| `session-news-brief` | `trading-agent-skills-news` |
+| `price-action` | `trading-agent-skills-price-action` |
+
+Each CLI reads a JSON bundle from stdin (or `--input <file>`) and writes JSON to stdout. The skill `SKILL.md` files document the bundle shape per skill.
+
+> ⚠ The agent must invoke these CLIs from a shell where the venv is on `PATH`. Either activate the venv before launching your harness, or install the package into a Python the harness's shell can see (e.g. `pipx install -e .` for a global install).
+
+---
+
+## 2. Install the skills into your agent harness
+
+Each skill is a self-contained directory under `.claude/skills/<name>/` with this structure:
+
+```
+<name>/
+  SKILL.md          # YAML frontmatter (name, description) + instructions
+  scripts/<name>.py # thin shim that calls the entry point
+```
+
+The format follows the Anthropic Skills convention (frontmatter + markdown instructions + optional helper scripts). Most agent harnesses that support skills can load this directory directly.
+
+### Claude Code
+
+Claude Code auto-discovers skills from two locations:
+
+| Scope | Path |
+|---|---|
+| Project | `<repo>/.claude/skills/<name>/` |
+| User (global) | `~/.claude/skills/<name>/` |
+
+**Project-scoped install** (only this repo can use the skills):
+
+The skills already live at `.claude/skills/` in this repo — no copy needed. Open Claude Code in the project directory and the six skills will register automatically.
+
+**User-scoped install** (every Claude Code session can use them):
+
+```bash
+# Windows (PowerShell)
+$src = "C:\projects\agent-trading-skills\.claude\skills"
+$dst = "$env:USERPROFILE\.claude\skills"
+New-Item -ItemType Directory -Force $dst | Out-Null
+Get-ChildItem $src -Directory | ForEach-Object {
+  New-Item -ItemType SymbolicLink -Path "$dst\$($_.Name)" -Target $_.FullName -Force
+}
+
+# macOS / Linux
+mkdir -p ~/.claude/skills
+for d in .claude/skills/*/; do
+  ln -sfn "$(pwd)/$d" ~/.claude/skills/"$(basename "$d")"
+done
+```
+
+Symlinks are preferred over copies so the skills stay in sync with the repo as you `git pull`.
+
+Verify with `/help` inside Claude Code — the six skills should appear in the available-skills list with their trigger descriptions.
+
+### OpenClaw ([openclaw.ai](https://openclaw.ai))
+
+OpenClaw uses the same `SKILL.md` format and scans these directories in priority order (first match wins):
+
+| Scope | Path |
+|---|---|
+| Workspace (highest) | `<workspace>/skills/` |
+| Workspace alt | `<workspace>/.agents/skills/` |
+| User (cross-harness) | `~/.agents/skills/` |
+| User (OpenClaw-only) | `~/.openclaw/skills/` |
+| Bundled | (shipped with OpenClaw) |
+| Custom (lowest) | paths from `skills.load.extraDirs` config |
+
+Pick the `~/.agents/skills/` location if you want the same install to be picked up by other harnesses that follow the agentskills.io convention; pick `~/.openclaw/skills/` to keep it scoped to OpenClaw only.
+
+```bash
+# Windows (PowerShell) — installs into ~/.openclaw/skills/
+$src = "C:\projects\agent-trading-skills\.claude\skills"
+$dst = "$env:USERPROFILE\.openclaw\skills"
+New-Item -ItemType Directory -Force $dst | Out-Null
+Get-ChildItem $src -Directory | ForEach-Object {
+  New-Item -ItemType SymbolicLink -Path "$dst\$($_.Name)" -Target $_.FullName -Force
+}
+
+# macOS / Linux
+mkdir -p ~/.openclaw/skills
+for d in .claude/skills/*/; do
+  ln -sfn "$(pwd)/$d" ~/.openclaw/skills/"$(basename "$d")"
+done
+```
+
+Verify with the OpenClaw skills CLI (`openclaw skills list` or via the Skill Workshop plugin) — the six skills should appear with their trigger descriptions.
+
+### Hermes Agent ([nousresearch/hermes-agent](https://github.com/nousresearch/hermes-agent))
+
+Hermes uses an enriched `SKILL.md` (the same Anthropic frontmatter, plus optional `version` / `platforms` / `metadata.hermes`). Plain Anthropic-format skills load fine — the extra fields are optional.
+
+Skills live under `~/.hermes/skills/`, organised hierarchically by category. Use the bundled CLI to install:
+
+```bash
+# Install all six from this GitHub repo
+hermes skills install vincentwongso/agent-trading-skills/.claude/skills/position-sizer
+hermes skills install vincentwongso/agent-trading-skills/.claude/skills/trade-journal
+hermes skills install vincentwongso/agent-trading-skills/.claude/skills/daily-risk-guardian
+hermes skills install vincentwongso/agent-trading-skills/.claude/skills/pre-trade-checklist
+hermes skills install vincentwongso/agent-trading-skills/.claude/skills/session-news-brief
+hermes skills install vincentwongso/agent-trading-skills/.claude/skills/price-action
+```
+
+(Hermes's hub installer runs a security scan; the skills only shell out to local `trading-agent-skills-*` CLIs, no network calls except the news fan-out in `session-news-brief`.)
+
+For a development setup that tracks `git pull` instead of taking a snapshot, symlink directly:
+
+```bash
+# macOS / Linux
+mkdir -p ~/.hermes/skills/trading
+for d in .claude/skills/*/; do
+  ln -sfn "$(pwd)/$d" ~/.hermes/skills/trading/"$(basename "$d")"
+done
+
+# Windows (PowerShell)
+$src = "C:\projects\agent-trading-skills\.claude\skills"
+$dst = "$env:USERPROFILE\.hermes\skills\trading"
+New-Item -ItemType Directory -Force $dst | Out-Null
+Get-ChildItem $src -Directory | ForEach-Object {
+  New-Item -ItemType SymbolicLink -Path "$dst\$($_.Name)" -Target $_.FullName -Force
+}
+```
+
+If you operate Hermes in a team setup with a shared skills repo, add the path to `external_dirs` in `~/.hermes/config.yaml` instead — those entries are read-only but get picked up alongside `~/.hermes/skills/`.
+
+### Other harnesses
+
+If your harness doesn't auto-discover SKILL.md-format skills, install them as plain CLI tools:
+
+1. Install the Python package as in step 1 (entry points on `PATH`).
+2. Paste the relevant `SKILL.md` body into your harness's prompt / system instructions — they're written as standalone agent instructions.
+3. Make sure your harness can shell out to the matching `trading-agent-skills-*` entry point and pipe a JSON bundle on stdin.
+
+The bundle shapes are documented inside each `SKILL.md` and in `src/trading_agent_skills/cli/<name>.py`. Nothing in the JSON contract is harness-specific.
+
+---
+
+## 3. First-run setup
+
+### Config file (`~/.trading-agent-skills/config.toml`)
+
+The guardian / checklist / news skills read user-tunable defaults from this file. It's auto-generated on first invocation if missing:
+
+```toml
+[risk]
+per_trade_max_pct = 1.0
+daily_loss_cap_pct = 5.0
+caution_threshold_pct = 2.5
+concurrent_risk_budget_pct = 5.0
+
+[watchlist]
+default = ["XAUUSD", "XAGUSD", "USOIL", "UKOIL", "NAS100"]
+base_universe = ["XAUUSD", "XAGUSD", "USOIL", "UKOIL", "NAS100", "EURUSD", "GBPUSD", "USDJPY", "BTCUSD"]
+max_size = 8
+```
+
+Edit to taste; change values are picked up on the next CLI invocation.
+
+### News API keys (skill 5 only)
+
+Set at least one of these as environment variables — never in `config.toml`, never in code:
+
+| Provider | Env var | Get a key |
+|---|---|---|
+| Finnhub | `FINNHUB_API_KEY` | https://finnhub.io |
+| Marketaux | `MARKETAUX_API_KEY` | https://marketaux.com |
+| ForexNews | `FOREXNEWS_API_KEY` | https://forexnewsapi.com |
+
+A missing key surfaces a `MISSING_NEWS_API_KEY` flag and that provider is skipped — the brief still runs on the others.
+
+The news CLI also auto-loads a `.env` file. Search order:
+
+1. `--env-file <path>` if passed explicitly
+2. `~/.trading-agent-skills/.env` (preferred — survives across project locations)
+3. `./.env` (repo-local override)
+
+`.env.example` at the repo root is committed; `.env` is gitignored. PowerShell users prefer this over bash-only `export`. Real shell env wins over `.env` (we use `os.environ.setdefault`).
+
+### Runtime files
+
+All skills write to `~/.trading-agent-skills/` (created on first run):
+
+```
+~/.trading-agent-skills/
+  journal.jsonl        # trade journal — append-only
+  config.toml          # config; auto-defaults if missing
+  daily_state.json     # NY-close session bookkeeping (guardian)
+  spread_baseline.json # EWMA per-symbol spread baselines (checklist)
+  calix_cache/         # 60s on-disk Calix cache
+  news_cache/          # 60s on-disk news cache
+  .env                 # optional, news API keys
+```
+
+None of these are committed to the repo.
+
+---
+
+## 4. Quick smoke test
+
+Once installed, talk to your agent in plain English. With Claude Code:
+
+```
+> what lot size for XAUUSD with 1% risk and stop at 2680?
+> show me the daily guardian
+> can I take a long on UKOIL?
+> morning brief
+> what's the setup on NAS100
+> journal my last UKOIL trade
+```
+
+The agent should match each phrase to a skill, fan out the relevant `mcp__mt5-mcp__*` calls, pipe the JSON bundle to the matching `trading-agent-skills-*` CLI, and render the result.
+
+---
 
 ## Layout
 
@@ -37,18 +300,8 @@ src/trading_agent_skills/        # pure-Python helpers, Decimal-typed, no I/O at
   watchlist.py         # skill 4 5-tier resolver (explicit / positions / calendar / vol / default)
   news_clients.py      # skill 4 Finnhub / Marketaux / ForexNews httpx clients
   news_brief.py        # skill 4 session-news-brief orchestrator
-  price_action/        # skill 5 sub-package
-    bars.py            #   MTF wrapper around indicators.Bar
-    pivots.py          #   fractal pivot detection + HH/HL/LH/LL classification
-    structure.py       #   S/R clustering + regime + MTF alignment
-    fvg.py             #   three-bar FVG detection with fill state
-    order_block.py     #   OB detection + retest tracking
-    liquidity.py       #   BSL/SSL pools + sweep state
-    context.py         #   ScanContext composes per-TF derived structure
-    scoring.py         #   deterministic structural quality score
-    schema.py          #   ScanResult output schema
-    scan.py            #   orchestrator wiring all 9 detectors
-    detectors/         #   9 detector modules (one per setup type)
+  price_action/        # skill 5 sub-package (bars, pivots, structure, fvg, order_block,
+                       #   liquidity, context, scoring, schema, scan, detectors/)
   cli/{size,journal,guardian,checklist,news,price_action}.py
 .claude/skills/        # one folder per skill (SKILL.md + thin scripts/ entry points)
   position-sizer/SKILL.md
@@ -60,45 +313,13 @@ src/trading_agent_skills/        # pure-Python helpers, Decimal-typed, no I/O at
 tests/                 # pytest, no live broker required (~440+ cases)
 ```
 
-Runtime files (not committed) live under `~/.trading-agent-skills/`: `journal.jsonl`, `config.toml`, `daily_state.json`, `spread_baseline.json`, `calix_cache/`, `news_cache/`.
-
-## Quick start
-
-```bash
-python -m venv .venv
-.venv/Scripts/activate    # Windows; `source .venv/bin/activate` elsewhere
-pip install -e ".[dev]"
-pytest                    # ~440 tests in ~1s
-```
-
-Each skill registers a CLI entry point:
-
-| Skill | Entry point |
-|---|---|
-| `position-sizer` | `trading-agent-skills-size` |
-| `trade-journal` | `trading-agent-skills-journal` |
-| `daily-risk-guardian` | `trading-agent-skills-guardian` |
-| `pre-trade-checklist` | `trading-agent-skills-checklist` |
-| `session-news-brief` | `trading-agent-skills-news` |
-| `price-action` | `trading-agent-skills-price-action` |
-
-All CLIs read a JSON bundle from stdin (or `--input <file>`) and write JSON to stdout. The Claude Code agent fans out the relevant `mt5-mcp` tool calls, builds the bundle, pipes it in, and renders the result.
+---
 
 ## Architecture in one paragraph
 
-Skills don't make MCP calls. The agent (Claude Code) reads a `SKILL.md`, fans out MCP tool calls (`get_account_info`, `get_quote`, `get_symbols`, `calc_margin`, `get_history`, `get_positions`, `get_rates`), bundles outputs as JSON, pipes to `python -m trading_agent_skills.cli.<name>`, and renders the JSON result. The CLI calls a pure function in `src/trading_agent_skills/` that takes Decimal-typed inputs and returns a Decimal-typed result. Tests pass plain dicts through the same `from_mcp` constructors production code uses — no `unittest.mock`. mt5-mcp's contract is "Decimal as string"; this repo preserves that boundary throughout.
+Skills don't make MCP calls. The agent (Claude Code, OpenClaw, Hermes, etc.) reads a `SKILL.md`, fans out MCP tool calls (`get_account_info`, `get_quote`, `get_symbols`, `calc_margin`, `get_history`, `get_positions`, `get_rates`), bundles outputs as JSON, pipes to `python -m trading_agent_skills.cli.<name>`, and renders the JSON result. The CLI calls a pure function in `src/trading_agent_skills/` that takes Decimal-typed inputs and returns a Decimal-typed result. Tests pass plain dicts through the same `from_mcp` constructors production code uses — no `unittest.mock`. mt5-mcp's contract is "Decimal as string"; this repo preserves that boundary throughout.
 
-## API keys (skill 4 only)
-
-The news fan-out reads keys from environment variables — never config or code:
-
-| Provider | Env var |
-|---|---|
-| Finnhub | `FINNHUB_API_KEY` |
-| Marketaux | `MARKETAUX_API_KEY` |
-| ForexNews | `FOREXNEWS_API_KEY` |
-
-A missing key produces a `MISSING_NEWS_API_KEY` flag and that provider is skipped — the brief still runs with the other two.
+---
 
 ## Conventions
 

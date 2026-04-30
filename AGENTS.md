@@ -247,6 +247,97 @@ Don't dump documentation links unprompted. The user came to you to avoid reading
 
 ---
 
+## Setting up autonomous trading
+
+This section is fired when the user says any of: "set up autonomous trading",
+"configure the trading agent", "initialize charter", "I want the agent to
+trade my demo account."
+
+### 1. Confirm prerequisites
+
+- mt5-mcp connected (`mcp__mt5-mcp__ping` succeeds).
+- Skills installed (per top of this file).
+- Demo account exists in MT5 terminal.
+
+### 2. Walk the user through the charter Q&A
+
+Ask the following questions, one at a time. Use sensible defaults; offer to
+re-prompt if the answer is out of range. After all questions, write the
+charter to `~/.trading-agent-skills/accounts/<account_id>/charter.md`.
+
+**Hard fields (required):**
+
+1. "What's the MT5 demo account number?" (must match a demo login the user
+   can verify via `mcp__mt5-mcp__get_account_info`)
+
+2. (If broker reachable) "Confirming via get_account_info... balance is
+   <X> <CCY>, server is <SERVER>. Correct account?" If broker not
+   reachable, skip this and note that first heartbeat tick will validate.
+
+3. "What's your trading style? scalp / day / swing?" Defaults map to:
+    - scalp → 15m heartbeat, allowed range 5m-15m
+    - day   → 1h heartbeat, allowed range 30m-1h
+    - swing → 4h heartbeat, allowed range 1h-4h
+
+4. "Heartbeat? Default <X> for your style. Override?"
+
+5. "Per-trade risk cap (% of equity)? Default 1.0%, max 5.0%."
+
+6. "Daily loss cap (% of equity)? Default 5.0%, max 20.0%."
+
+7. "Max concurrent positions? Default 3."
+
+**Soft fields (optional — ask the user if they want to constrain):**
+
+> "That covers the hard rules. Want to constrain instruments, sessions, or
+> setup types — or leave it open and let the agent decide each tick?"
+
+If the user volunteers constraints, fill the relevant fields. If not, leave
+empty (the agent will use the 5-tier resolver, all sessions, all setup types).
+
+### 3. Write the charter
+
+Render the YAML and write to disk:
+
+```bash
+mkdir -p ~/.trading-agent-skills/accounts/<account_id>/charter_versions
+mkdir -p ~/.trading-agent-skills/accounts/<account_id>/proposals
+cat > ~/.trading-agent-skills/accounts/<account_id>/charter.md << 'EOF'
+mode: demo
+account_id: <account_id>
+heartbeat: <heartbeat>
+hard_caps:
+  per_trade_risk_pct: <pct>
+  daily_loss_pct: <pct>
+  max_concurrent_positions: <n>
+charter_version: 1
+created_at: <ISO 8601 with offset, e.g. 2026-04-30T14:00:00+10:00>
+created_account_balance: <balance>
+trading_style: <scalp|day|swing>
+sessions_allowed: []
+instruments: []
+allowed_setups: []
+notes: ""
+EOF
+```
+
+### 4. Confirm the heartbeat trigger
+
+After charter is written, instruct the user how to start the heartbeat:
+
+- Claude Code: `/loop <heartbeat> /trading-heartbeat`
+- OpenClaw: add a cron entry pointing to the trading-heartbeat skill at the
+  configured cadence.
+- Hermes: add a heartbeat-system entry pointing to the trading-heartbeat skill.
+
+### 5. Smoke test
+
+Fire one manual tick and check that a decision record (likely a
+`weekend` / `all_markets_closed` / `guardian_clear` skip) appears in
+`~/.trading-agent-skills/accounts/<account_id>/decisions.jsonl`.
+
+---
+
 ## Troubleshooting
 
 - **`pip install -e .` fails on Python < 3.11** — the package requires 3.11+. Tell the user to upgrade Python.

@@ -173,6 +173,8 @@ def test_archive_old_before_overwrite(tmp_path: Path) -> None:
         encoding="utf-8"
     )
     assert "per_trade_risk_pct: 0.8" in paths.charter.read_text(encoding="utf-8")
+    archived = parse_charter((paths.charter_versions / "v1.md").read_text(encoding="utf-8"))
+    assert archived.charter_version == 1
 
 
 def test_archive_refuses_version_mismatch(tmp_path: Path) -> None:
@@ -183,3 +185,53 @@ def test_archive_refuses_version_mismatch(tmp_path: Path) -> None:
     # Re-write at version 1 (no bump) — must refuse
     with pytest.raises(CharterError, match="must increment"):
         write_charter_with_archive(paths, v1)
+
+
+def test_render_rejects_quote_in_notes() -> None:
+    c = parse_charter(_VALID_CHARTER)
+    bad = Charter(
+        mode=c.mode, account_id=c.account_id, heartbeat=c.heartbeat,
+        hard_caps=c.hard_caps, charter_version=c.charter_version,
+        created_at=c.created_at, created_account_balance=c.created_account_balance,
+        trading_style=c.trading_style, sessions_allowed=c.sessions_allowed,
+        instruments=c.instruments, allowed_setups=c.allowed_setups,
+        notes='He said "hi"',
+    )
+    with pytest.raises(CharterError, match="notes"):
+        render_charter(bad)
+
+
+def test_render_rejects_newline_in_notes() -> None:
+    c = parse_charter(_VALID_CHARTER)
+    bad = Charter(
+        mode=c.mode, account_id=c.account_id, heartbeat=c.heartbeat,
+        hard_caps=c.hard_caps, charter_version=c.charter_version,
+        created_at=c.created_at, created_account_balance=c.created_account_balance,
+        trading_style=c.trading_style, sessions_allowed=c.sessions_allowed,
+        instruments=c.instruments, allowed_setups=c.allowed_setups,
+        notes="line1\nline2",
+    )
+    with pytest.raises(CharterError, match="notes"):
+        render_charter(bad)
+
+
+def test_render_rejects_comma_in_instrument() -> None:
+    c = parse_charter(_VALID_CHARTER)
+    bad = Charter(
+        mode=c.mode, account_id=c.account_id, heartbeat=c.heartbeat,
+        hard_caps=c.hard_caps, charter_version=c.charter_version,
+        created_at=c.created_at, created_account_balance=c.created_account_balance,
+        trading_style=c.trading_style, sessions_allowed=c.sessions_allowed,
+        instruments=["XAU,USD"], allowed_setups=c.allowed_setups,
+        notes=c.notes,
+    )
+    with pytest.raises(CharterError, match="instruments"):
+        render_charter(bad)
+
+
+def test_write_charter_creates_parent_dir(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    # Do NOT call ensure_dirs — write_charter should create the parent itself.
+    c = parse_charter(_VALID_CHARTER)
+    write_charter(paths.charter, c)
+    assert paths.charter.is_file()

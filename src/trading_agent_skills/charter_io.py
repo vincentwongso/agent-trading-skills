@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -199,8 +198,32 @@ def _strip_quotes(raw: str) -> str:
     return raw
 
 
+_FORBIDDEN_IN_NOTES = ('"', "\n")
+_FORBIDDEN_IN_LIST_ITEM = ('"', ",", "\n")
+
+
+def _validate_renderable(c: "Charter") -> None:
+    for ch in _FORBIDDEN_IN_NOTES:
+        if ch in c.notes:
+            raise CharterError(
+                f"notes contains forbidden character {ch!r} — strategy-review must sanitise before write"
+            )
+    for field_name, items in (
+        ("sessions_allowed", c.sessions_allowed),
+        ("instruments", c.instruments),
+        ("allowed_setups", c.allowed_setups),
+    ):
+        for item in items:
+            for ch in _FORBIDDEN_IN_LIST_ITEM:
+                if ch in item:
+                    raise CharterError(
+                        f"{field_name}[] entry {item!r} contains forbidden character {ch!r}"
+                    )
+
+
 def render_charter(c: Charter) -> str:
     """Render a Charter back to the YAML-like text format parse_charter consumes."""
+    _validate_renderable(c)
     sessions = "[" + ", ".join(f'"{s}"' for s in c.sessions_allowed) + "]" if c.sessions_allowed else "[]"
     instruments = "[" + ", ".join(f'"{s}"' for s in c.instruments) + "]" if c.instruments else "[]"
     setups = "[" + ", ".join(f'"{s}"' for s in c.allowed_setups) + "]" if c.allowed_setups else "[]"
@@ -224,6 +247,8 @@ def render_charter(c: Charter) -> str:
 
 
 def write_charter(path: Path, c: Charter) -> None:
+    """Write the charter to `path`, creating parent dirs if missing."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_charter(c), encoding="utf-8")
 
 
@@ -232,6 +257,8 @@ def write_charter_with_archive(paths: AccountPaths, new: Charter) -> None:
 
     Refuses if new.charter_version is not strictly greater than the current
     on-disk version. Caller is responsible for bumping charter_version.
+
+    Creates parent dirs (charter_versions, account root) if missing.
     """
     if paths.charter.is_file():
         old = parse_charter(paths.charter.read_text(encoding="utf-8"))
@@ -240,6 +267,7 @@ def write_charter_with_archive(paths: AccountPaths, new: Charter) -> None:
                 f"new charter must increment charter_version above {old.charter_version}, "
                 f"got {new.charter_version}"
             )
+        paths.charter_versions.mkdir(parents=True, exist_ok=True)
         archive_path = paths.charter_versions / f"v{old.charter_version}.md"
         archive_path.write_text(render_charter(old), encoding="utf-8")
     write_charter(paths.charter, new)

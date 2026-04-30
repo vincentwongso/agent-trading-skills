@@ -43,6 +43,64 @@ _EARNINGS_RELEVANT_INDICES: frozenset[str] = frozenset({
 })
 
 
+# Equity tickers that are large-cap constituents of each stock index. Used by
+# the news brief to attach Marketaux equity-tagged articles (`('AAPL',)`) to
+# the corresponding index symbol. Indicative top-N by market cap / activity —
+# not exhaustive. Vincent's default watchlist only includes NAS100; others are
+# stubs that can be expanded when those indices enter the watchlist.
+_INDEX_CONSTITUENTS: dict[str, frozenset[str]] = {
+    "NAS100": frozenset({
+        "AAPL", "MSFT", "GOOG", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
+        "AVGO", "AMD", "NFLX", "ADBE", "CSCO", "INTC", "INTU", "QCOM",
+        "TXN", "AMAT", "ASML", "MU", "ORCL", "PEP", "COIN", "PYPL",
+        "BKNG", "PANW", "SBUX", "MRVL", "ADI", "REGN",
+    }),
+    "US500": frozenset({
+        "AAPL", "MSFT", "GOOG", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
+        "AVGO", "JPM", "BAC", "WFC", "XOM", "CVX", "JNJ", "PG", "KO",
+        "UNH", "V", "MA", "HD", "WMT", "DIS",
+    }),
+    "US30": frozenset({
+        "AAPL", "MSFT", "JPM", "JNJ", "PG", "KO", "DIS", "BA", "CAT",
+        "GS", "HD", "IBM", "MCD", "NKE", "TRV", "UNH", "V", "WMT",
+    }),
+}
+
+
+# Topic-keyword vocabularies for symbols whose news arrives untagged in the
+# Finnhub general feed. A word-bounded match against title/summary surfaces
+# articles like "Oil retreats..." that have empty `symbols`/`keywords` tags.
+# Indices use _INDEX_CONSTITUENTS (ticker matching) instead.
+_TOPIC_VOCAB: dict[str, frozenset[str]] = {
+    "XAUUSD": frozenset({"GOLD", "XAU", "BULLION"}),
+    "XAGUSD": frozenset({"SILVER", "XAG"}),
+    "USOIL":  frozenset({"OIL", "CRUDE", "WTI", "OPEC", "PETROLEUM"}),
+    "UKOIL":  frozenset({"OIL", "CRUDE", "BRENT", "OPEC", "PETROLEUM"}),
+}
+
+
+def constituents_of(symbol: str) -> frozenset[str]:
+    """Equity tickers that are constituents of an index symbol.
+
+    Returns an empty frozenset if the symbol is not a known index. Strips a
+    Fintrix-style ``.z`` suffix before lookup so ``NAS100.z`` resolves the
+    same as ``NAS100``.
+    """
+    base = symbol.upper().split(".")[0]
+    return _INDEX_CONSTITUENTS.get(base, frozenset())
+
+
+def topic_vocab_for(symbol: str) -> frozenset[str]:
+    """Topic-keyword vocabulary for a commodity / metal symbol.
+
+    Returns an empty frozenset for symbols without a configured vocab —
+    indices route through ``constituents_of`` instead, FX pairs rely on the
+    currency-of-interest path.
+    """
+    base = symbol.upper().split(".")[0]
+    return _TOPIC_VOCAB.get(base, frozenset())
+
+
 def is_fx_pair(currency_base: str, currency_profit: str) -> bool:
     """True if both sides look like ISO-4217 currency codes (3 uppercase letters)."""
     return (

@@ -431,3 +431,242 @@ def test_result_carries_watchlist_metadata() -> None:
     result = build(_input(watchlist=("XAUUSD", "NAS100")))
     assert result.watchlist == ["XAUUSD", "NAS100"]
     assert "explicit" in result.watchlist_by_tier
+
+
+# ---------- Relevance matching (Bug #3 fix, 2026-05-01) --------------------
+#
+# Background: round-3 verification showed metals articles cloning to USOIL,
+# UKOIL, NAS100 via an over-broad "currency code in title/summary" textual
+# fallback. Marketaux equity-tagged articles never reached NAS100. Finnhub
+# general-feed articles (empty symbols/keywords) dropped entirely. These
+# tests pin the new behavior: explicit symbol → canonical pair → index
+# constituent → bare currency / keyword → topic vocab. No substring fallback.
+
+
+def test_canonical_pair_match_xau_dash_usd_to_xauusd() -> None:
+    """ForexNews tags articles 'XAU-USD'; the symbol is 'XAUUSD'. They must
+    align without going through the over-broad currency-substring fallback."""
+    art = _article(
+        title="Gold (XAU/USD) Price Forecast",
+        symbols=("XAU-USD",),
+        source="forexnews",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("XAUUSD",),
+        symbol_meta={
+            "XAUUSD": _meta("XAUUSD", base="XAU", profit="USD", category="metals"),
+        },
+        articles_by_provider={"forexnews": [art]},
+        provider_status={"forexnews": "ok"},
+    ))
+    assert "XAUUSD" in result.news_by_symbol
+
+
+def test_canonical_pair_match_strips_broker_z_suffix() -> None:
+    """The Fintrix broker form is 'XAUUSD.z'. Matching must strip the suffix
+    so canonical pair 'XAU-USD' attaches to 'XAUUSD.z'."""
+    art = _article(
+        title="Gold (XAU/USD) Price Forecast",
+        symbols=("XAU-USD",),
+        source="forexnews",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("XAUUSD.z",),
+        symbol_meta={
+            "XAUUSD.z": _meta(
+                "XAUUSD.z", base="XAU", profit="USD", category="metals"
+            ),
+        },
+        articles_by_provider={"forexnews": [art]},
+        provider_status={"forexnews": "ok"},
+    ))
+    assert "XAUUSD.z" in result.news_by_symbol
+
+
+def test_canonical_pair_does_not_cross_attribute_to_unrelated_symbol() -> None:
+    """An article tagged 'XAU-USD' must NOT attach to USOIL or NAS100 just
+    because they share the USD leg. This is the exact phantom-dedup pattern
+    Bug #3 round-3 surfaced."""
+    art = _article(
+        title="Gold (XAU/USD) rebounds near monthly low",
+        symbols=("XAU-USD",),
+        source="forexnews",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("XAUUSD", "USOIL", "UKOIL", "NAS100"),
+        symbol_meta={
+            "XAUUSD": _meta("XAUUSD", base="XAU", profit="USD", category="metals"),
+            "USOIL":  _meta("USOIL",  base="USOIL",  profit="USD", category="commodities"),
+            "UKOIL":  _meta("UKOIL",  base="UKOIL",  profit="USD", category="commodities"),
+            "NAS100": _meta("NAS100", base="NAS100", profit="USD", category="indices"),
+        },
+        articles_by_provider={"forexnews": [art]},
+        provider_status={"forexnews": "ok"},
+    ))
+    assert "XAUUSD" in result.news_by_symbol
+    assert "USOIL"  not in result.news_by_symbol
+    assert "UKOIL"  not in result.news_by_symbol
+    assert "NAS100" not in result.news_by_symbol
+
+
+def test_constituent_match_aapl_attaches_to_nas100() -> None:
+    """Marketaux tags equity articles with the ticker. NAS100's constituent
+    map should route AAPL/MSFT/GOOG/etc. to the index even though no
+    currency or pair matches."""
+    art = _article(
+        title="Apple Q2: Firing On All Cylinders",
+        symbols=("AAPL",),
+        source="marketaux",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("NAS100",),
+        symbol_meta={
+            "NAS100": _meta("NAS100", base="NAS100", profit="USD", category="indices"),
+        },
+        articles_by_provider={"marketaux": [art]},
+        provider_status={"marketaux": "ok"},
+    ))
+    assert "NAS100" in result.news_by_symbol
+
+
+def test_constituent_does_not_match_commodity_or_metal() -> None:
+    """('AAPL',) is meaningless for USOIL / XAUUSD. The constituent path is
+    indices-only so equity articles don't pollute commodities/metals."""
+    art = _article(
+        title="Apple Q2: Firing On All Cylinders",
+        symbols=("AAPL",),
+        source="marketaux",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("USOIL", "XAUUSD"),
+        symbol_meta={
+            "USOIL":  _meta("USOIL",  base="USOIL", profit="USD", category="commodities"),
+            "XAUUSD": _meta("XAUUSD", base="XAU",   profit="USD", category="metals"),
+        },
+        articles_by_provider={"marketaux": [art]},
+        provider_status={"marketaux": "ok"},
+    ))
+    assert "USOIL"  not in result.news_by_symbol
+    assert "XAUUSD" not in result.news_by_symbol
+
+
+def test_topic_vocab_oil_word_matches_usoil_via_finnhub_general_feed() -> None:
+    """Finnhub general-feed articles arrive with empty symbols/keywords. A
+    word-bounded topic vocab match against title/summary recovers them."""
+    art = _article(
+        title="Oil retreats after hitting four-year high on US-Iran war fears",
+        symbols=(),
+        keywords=(),
+        source="finnhub",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("USOIL",),
+        symbol_meta={
+            "USOIL": _meta("USOIL", base="USOIL", profit="USD", category="commodities"),
+        },
+        articles_by_provider={"finnhub": [art]},
+        provider_status={"finnhub": "ok"},
+    ))
+    assert "USOIL" in result.news_by_symbol
+
+
+def test_topic_vocab_uses_word_boundary_not_substring() -> None:
+    """'Toiling' contains the substring 'oil' but is not the OIL topic. The
+    matcher must use a word boundary to avoid false positives."""
+    art = _article(
+        title="Toiling away in the salt mines",
+        symbols=(),
+        keywords=(),
+        source="finnhub",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("USOIL",),
+        symbol_meta={
+            "USOIL": _meta("USOIL", base="USOIL", profit="USD", category="commodities"),
+        },
+        articles_by_provider={"finnhub": [art]},
+        provider_status={"finnhub": "ok"},
+    ))
+    assert "USOIL" not in result.news_by_symbol
+
+
+def test_topic_vocab_gold_matches_xauusd_not_usoil() -> None:
+    art = _article(
+        title="Gold rebounds as dollar dives",
+        symbols=(),
+        keywords=(),
+        source="finnhub",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("XAUUSD", "USOIL"),
+        symbol_meta={
+            "XAUUSD": _meta("XAUUSD", base="XAU",   profit="USD", category="metals"),
+            "USOIL":  _meta("USOIL",  base="USOIL", profit="USD", category="commodities"),
+        },
+        articles_by_provider={"finnhub": [art]},
+        provider_status={"finnhub": "ok"},
+    ))
+    assert "XAUUSD" in result.news_by_symbol
+    assert "USOIL"  not in result.news_by_symbol
+
+
+def test_no_match_when_only_signal_is_currency_substring_in_title() -> None:
+    """Regression guard for the dropped fallback: if an article has no
+    explicit symbol, no canonical pair, no constituent, no bare-currency
+    tag, and no topic vocab hit — the literal substring 'USD' inside
+    'XAG/USD' in the title must not by itself attach the article to every
+    USD-quoted symbol."""
+    art = _article(
+        title="Silver Price Forecast: XAG/USD restrictive policy risks",
+        symbols=("XAG-USD",),       # canon pair → only XAGUSD should attach
+        keywords=(),
+        source="forexnews",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("XAGUSD", "USOIL", "NAS100"),
+        symbol_meta={
+            "XAGUSD": _meta("XAGUSD", base="XAG",    profit="USD", category="metals"),
+            "USOIL":  _meta("USOIL",  base="USOIL",  profit="USD", category="commodities"),
+            "NAS100": _meta("NAS100", base="NAS100", profit="USD", category="indices"),
+        },
+        articles_by_provider={"forexnews": [art]},
+        provider_status={"forexnews": "ok"},
+    ))
+    assert "XAGUSD" in result.news_by_symbol
+    assert "USOIL"  not in result.news_by_symbol
+    assert "NAS100" not in result.news_by_symbol
+
+
+def test_bare_currency_tag_still_matches_macro_event() -> None:
+    """Backwards-compat: an article tagged with a bare currency code (Fed
+    statement → ('USD',)) is genuinely macro-relevant to every USD-quoted
+    symbol. Don't break this — only the over-broad SUBSTRING match was bad,
+    not the proper bare-currency-tag intersection."""
+    art = _article(
+        title="Fed holds rates",
+        symbols=("USD",),
+        source="finnhub",
+        published=datetime(2026, 4, 29, 18, 0, tzinfo=timezone.utc),
+    )
+    result = build(_input(
+        watchlist=("XAUUSD", "USOIL", "NAS100"),
+        symbol_meta={
+            "XAUUSD": _meta("XAUUSD", base="XAU",    profit="USD", category="metals"),
+            "USOIL":  _meta("USOIL",  base="USOIL",  profit="USD", category="commodities"),
+            "NAS100": _meta("NAS100", base="NAS100", profit="USD", category="indices"),
+        },
+        articles_by_provider={"finnhub": [art]},
+        provider_status={"finnhub": "ok"},
+    ))
+    assert "XAUUSD" in result.news_by_symbol
+    assert "USOIL"  in result.news_by_symbol
+    assert "NAS100" in result.news_by_symbol

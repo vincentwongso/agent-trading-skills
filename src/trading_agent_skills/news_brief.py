@@ -18,6 +18,7 @@ This module is pure — no I/O, no broker calls, no httpx. The agent fetches.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -32,7 +33,9 @@ from trading_agent_skills.news_dedup import (
 )
 from trading_agent_skills.symbol_meta import (
     _EARNINGS_RELEVANT_INDICES,
+    constituents_of,
     currencies_of_interest,
+    topic_vocab_for,
 )
 from trading_agent_skills.watchlist import WatchlistResolution
 
@@ -207,29 +210,110 @@ def _build_calendar_overlay(
     return out
 
 
+def _is_currency_pair_tag(tag: str) -> bool:
+    """True for ``XAU-USD`` / ``XAU/USD`` / ``XAUUSD`` style pair tags.
+
+    Distinguishes pair-form article tags from bare ISO currency codes
+    (``USD``). Pair tags must align by full pair to match a symbol; bare
+    codes are macro-relevant to any symbol with that currency in scope.
+    """
+    if "-" in tag or "/" in tag:
+        return True
+    # Six-letter all-alpha string (e.g. ``EURUSD``) is a pair without separator.
+    return len(tag) == 6 and tag.isalpha()
+
+
+def _canonicalize_pair(tag: str) -> str:
+    """Normalize ``XAU-USD`` / ``XAU/USD`` / ``XAUUSD`` → ``XAUUSD``."""
+    return tag.replace("-", "").replace("/", "").upper()
+
+
+def _topic_vocab_pattern(vocab: Iterable[str]) -> re.Pattern[str]:
+    return re.compile(
+        r"\b(?:" + "|".join(re.escape(t) for t in vocab) + r")\b",
+        re.IGNORECASE,
+    )
+
+
 def _articles_relevant_to(
     sym: str,
     meta: Optional[SymbolMeta],
     article: NewsArticle,
 ) -> bool:
+    """Decide whether ``article`` is relevant to watchlist symbol ``sym``.
+
+    Match order (most specific → most general):
+
+    1. Explicit symbol membership (broker form, e.g. ``XAUUSD.z``).
+    2. Canonical pair match — article tagged ``XAU-USD`` ↔ symbol ``XAUUSD``
+       (or ``XAUUSD.z`` after stripping the broker suffix).
+    3. Index-constituent equity ticker — article tagged ``('AAPL',)`` →
+       NAS100 when ``meta.category == "indices"`` and AAPL is in
+       :data:`symbol_meta._INDEX_CONSTITUENTS`.
+    4. Bare-currency-tag intersection — article tagged ``('USD',)`` (Fed
+       statement etc.) is macro-relevant to any USD-quoted symbol. Pair
+       tags like ``XAU-USD`` are excluded here so they only match via
+       step 2, never via the shared USD leg.
+    5. Article-keyword intersection with the symbol's currencies of
+       interest (forex pairs primarily).
+    6. Topic-vocabulary regex on title + summary (commodities + metals
+       only) — recovers Finnhub general-feed articles whose tags are empty.
+
+    Deliberately removed: the prior "currency code in title/summary"
+    substring fallback. ``"USD"`` appears in nearly every forex headline
+    (``XAU/USD``, ``USD/JPY``) and caused every USD-quoted symbol to
+    inherit every USD-tagged article — the Bug #3 phantom-dedup pattern.
+    """
     upper_sym = sym.upper()
+    base_sym = upper_sym.split(".")[0]
     article_symbols = {s.upper() for s in article.symbols}
-    if upper_sym in article_symbols:
+
+    # 1. Explicit symbol membership — broker form (``XAUUSD.z``) or plain.
+    if upper_sym in article_symbols or base_sym in article_symbols:
         return True
+
+    # 2. Canonical pair match — strip dash/slash from article pair tags so
+    #    ``XAU-USD`` aligns with ``XAUUSD`` / ``XAUUSD.z``.
+    article_pair_canon = {
+        _canonicalize_pair(s) for s in article_symbols if _is_currency_pair_tag(s)
+    }
+    if base_sym in article_pair_canon:
+        return True
+
     if meta is None:
         return False
+
+    # 3. Index-constituent equity ticker — Marketaux-style ``('AAPL',)``
+    #    tagging routes to NAS100 when the symbol is an index.
+    if meta.category.lower() == "indices":
+        constituents = constituents_of(base_sym)
+        if article_symbols & constituents:
+            return True
+
     relevant = {c.upper() for c in _symbol_currencies(meta)}
-    if not relevant:
-        return False
-    # Forex-source articles tag currencies, not tickers — match by currency.
-    if article_symbols & relevant:
-        return True
-    article_kw = {k.upper() for k in article.keywords}
-    if article_kw & relevant:
-        return True
-    # Last-resort textual match on currency code in title/summary (cheap).
-    haystack = (article.title + " " + article.summary).upper()
-    return any(c in haystack for c in relevant)
+    if relevant:
+        # 4. Bare-currency tags only — pair tags excluded (handled in step 2).
+        bare_currency_tags = {
+            s for s in article_symbols if not _is_currency_pair_tag(s)
+        }
+        if bare_currency_tags & relevant:
+            return True
+
+        # 5. Article keywords — forex providers often expose currency codes
+        #    here rather than in symbols.
+        article_kw = {k.upper() for k in article.keywords}
+        if article_kw & relevant:
+            return True
+
+    # 6. Topic vocabulary — word-bounded so substrings like ``"toiling"`` or
+    #    ``"marigolds"`` don't trigger a false positive.
+    vocab = topic_vocab_for(base_sym)
+    if vocab:
+        haystack = article.title + " " + article.summary
+        if _topic_vocab_pattern(vocab).search(haystack):
+            return True
+
+    return False
 
 
 def _build_news_by_symbol(

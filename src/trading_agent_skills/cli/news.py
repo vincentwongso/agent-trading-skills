@@ -86,6 +86,7 @@ from trading_agent_skills.news_clients import (
     MarketauxClient,
 )
 from trading_agent_skills.news_dedup import NewsArticle, canonicalise_url, classify_impact
+from trading_agent_skills.symbol_meta import constituents_of
 from trading_agent_skills.watchlist import (
     calendar_driven_symbols,
     resolve_watchlist,
@@ -225,12 +226,18 @@ def _fan_out_news(
     marketaux = MarketauxClient()
     forexnews = ForexNewsClient()
     fin_a, fin_s = finnhub.fetch_general(lookback_hours=lookback_hours)
-    # Marketaux: filter only to symbols that look like equity tickers it can
-    # recognize. Broker symbol names (XAUUSD.z, USOIL) drop through to the
-    # general feed where downstream relevance matching does the picking.
-    equity_tickers = [s for s in watchlist_symbols if _is_equity_like_ticker(s)]
+    # Marketaux: equity-like watchlist tickers PLUS index-constituent tickers
+    # for any index in the watchlist. Without the constituent expansion,
+    # NAS100 produces zero Marketaux articles because the API doesn't know
+    # the index name as an entity — but it does know AAPL, MSFT, etc., which
+    # the relevance matcher then routes back to NAS100 via constituents_of().
+    marketaux_symbols: set[str] = {
+        s for s in watchlist_symbols if _is_equity_like_ticker(s)
+    }
+    for sym in watchlist_symbols:
+        marketaux_symbols.update(constituents_of(sym))
     mark_a, mark_s = marketaux.fetch(
-        symbols=equity_tickers, lookback_hours=lookback_hours
+        symbols=sorted(marketaux_symbols), lookback_hours=lookback_hours
     )
     # ForexNews: derive dash-form currency pairs from broker meta. The API
     # only accepts ``currencypair`` (rejects bare ``currency``) so each

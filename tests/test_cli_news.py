@@ -14,6 +14,7 @@ import pytest
 from trading_agent_skills.cli.news import (
     _derive_currencies_from_meta,
     _derive_currencypairs_from_meta,
+    _fan_out_news,
     _is_equity_like_ticker,
     main,
 )
@@ -333,6 +334,85 @@ class TestDeriveCurrencypairsFromMeta:
         meta = {"XAUUSD.z": _meta(base="XAU", profit="USD", category="metals")}
         out = _derive_currencypairs_from_meta(["XAUUSD.z", "PHANTOM"], meta)
         assert out == {"XAU-USD"}
+
+
+class TestFanOutMarketauxConstituentExpansion:
+    """When an index symbol (NAS100) is in the watchlist, ``_fan_out_news``
+    must ask Marketaux about the index's equity constituents (AAPL, MSFT,
+    GOOG, …). Without this, Marketaux gets the literal ``"NAS100"`` which
+    isn't in its entity space and returns zero articles — leaving the index
+    with no news coverage even though the relevance matcher could route
+    constituent articles to it.
+    """
+
+    def _stub_clients(self, monkeypatch: pytest.MonkeyPatch) -> dict:
+        captured: dict = {}
+
+        class _StubFinnhub:
+            def fetch_general(self, **kwargs):
+                return [], "ok"
+
+        class _StubMarketaux:
+            def fetch(self, *, symbols=(), lookback_hours: int = 12, limit: int = 25):
+                captured["marketaux_symbols"] = list(symbols)
+                return [], "ok"
+
+        class _StubForexNews:
+            def fetch(self, *, currencypairs=(), limit: int = 25):
+                captured["forexnews_pairs"] = list(currencypairs)
+                return [], "ok"
+
+        monkeypatch.setattr(
+            "trading_agent_skills.cli.news.FinnhubClient", _StubFinnhub
+        )
+        monkeypatch.setattr(
+            "trading_agent_skills.cli.news.MarketauxClient", _StubMarketaux
+        )
+        monkeypatch.setattr(
+            "trading_agent_skills.cli.news.ForexNewsClient", _StubForexNews
+        )
+        return captured
+
+    def test_nas100_expands_to_constituents(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = self._stub_clients(monkeypatch)
+        meta = {
+            "NAS100": _meta(base="NAS100", profit="USD", category="indices"),
+        }
+        _fan_out_news(
+            watchlist_symbols=["NAS100"],
+            symbol_meta=meta,
+            lookback_hours=12,
+        )
+        marketaux_symbols = set(captured["marketaux_symbols"])
+        # A handful of high-cap NAS100 constituents the constituent map
+        # ships with — assert presence rather than exact equality so the map
+        # can grow without breaking this test.
+        for ticker in ("AAPL", "MSFT", "NVDA", "GOOG", "AMZN"):
+            assert ticker in marketaux_symbols, ticker
+        # NAS100 itself is not equity-like so it must not be passed verbatim.
+        assert "NAS100" not in marketaux_symbols
+
+    def test_commodity_only_watchlist_does_not_inject_equity_tickers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = self._stub_clients(monkeypatch)
+        meta = {
+            "USOIL": _meta(base="USOIL", profit="USD", category="commodities"),
+            "UKOIL": _meta(base="UKOIL", profit="USD", category="commodities"),
+        }
+        _fan_out_news(
+            watchlist_symbols=["USOIL", "UKOIL"],
+            symbol_meta=meta,
+            lookback_hours=12,
+        )
+        # Neither USOIL nor UKOIL has constituents, so no equity tickers
+        # should be injected. Existing equity-ticker heuristic still passes
+        # USOIL/UKOIL through verbatim (Marketaux returns nothing for them,
+        # which is fine — relevance matching handles the routing).
+        assert "AAPL" not in captured["marketaux_symbols"]
+        assert "MSFT" not in captured["marketaux_symbols"]
 
 
 class TestIsEquityLikeTicker:

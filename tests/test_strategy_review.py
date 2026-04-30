@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 
 from trading_agent_skills.account_paths import resolve_account_paths
+from trading_agent_skills.decision_log import write_intent
 from trading_agent_skills.journal_io import write_open
 from trading_agent_skills.strategy_review import (
+    compute_decision_summary,
     compute_performance_summary,
     compute_setup_breakdown,
 )
@@ -97,3 +99,27 @@ def test_setup_breakdown_per_label(tmp_path: Path) -> None:
     assert pin["losses"] == 0
     assert fvg["wins"] == 0
     assert fvg["losses"] == 2
+
+
+def test_decision_summary_groups_skip_reasons(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    paths.ensure_dirs()
+    skip_reasons = ["spread_too_wide", "spread_too_wide", "guardian_caution"]
+    base = datetime(2026, 4, 29, 22, 0, 0, tzinfo=timezone.utc)
+    for i, reason in enumerate(skip_reasons):
+        write_intent(
+            paths.decisions, kind="skip", symbol="X", ticket=None,
+            setup_type="price_action:pin_bar", reasoning=reason,
+            skills_used=[], guardian_status="CLEAR", checklist_verdict="BLOCK",
+            execution=None, charter_version=1,
+            tick_id=(base + timedelta(days=i)).isoformat().replace("+00:00", "Z"),
+        )
+    summary = compute_decision_summary(
+        paths,
+        since=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        until=datetime(2026, 5, 10, tzinfo=timezone.utc),
+    )
+    assert summary["total_decisions"] == 3
+    assert summary["skips"] == 3
+    assert summary["entries"] == 0
+    assert summary["top_skip_reasons"][0] == ("spread_too_wide", 2)

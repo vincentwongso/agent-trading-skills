@@ -1,0 +1,169 @@
+import json
+from pathlib import Path
+
+import pytest
+
+from trading_agent_skills.decision_log import (
+    ALLOWED_KINDS,
+    ALLOWED_EXEC_STATUSES,
+    DecisionSchemaError,
+    write_intent,
+)
+
+
+def test_write_intent_open_appends_record(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    write_intent(
+        path,
+        kind="open",
+        symbol="XAUUSD.z",
+        ticket=None,
+        setup_type="price_action:pin_bar",
+        reasoning="Pullback to 2380, pin bar rejection on H1.",
+        skills_used=["price-action", "pre-trade-checklist", "position-sizer"],
+        guardian_status="CLEAR",
+        checklist_verdict="PASS",
+        execution={
+            "side": "BUY",
+            "volume": "0.08",
+            "entry_price": "2380.50",
+            "sl": "2375.00",
+            "tp": "2395.00",
+        },
+        charter_version=3,
+        tick_id="2026-04-30T22:00:00Z",
+    )
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["kind"] == "open"
+    assert rec["symbol"] == "XAUUSD.z"
+    assert rec["execution"]["execution_status"] == "pending"
+    assert rec["execution"]["volume"] == "0.08"  # string, not float
+    assert rec["charter_version"] == 3
+    assert rec["tick_id"] == "2026-04-30T22:00:00Z"
+
+
+def test_write_intent_skip_no_execution(tmp_path: Path) -> None:
+    path = tmp_path / "decisions.jsonl"
+    write_intent(
+        path,
+        kind="skip",
+        symbol="EURUSD.z",
+        ticket=None,
+        setup_type="price_action:fvg_fill",
+        reasoning="Spread 1.8x baseline, skipped.",
+        skills_used=["price-action", "pre-trade-checklist"],
+        guardian_status="CAUTION",
+        checklist_verdict="BLOCK",
+        execution=None,
+        charter_version=3,
+        tick_id="2026-04-30T22:00:00Z",
+    )
+    rec = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert rec["kind"] == "skip"
+    assert rec["execution"] is None
+
+
+def test_write_intent_rejects_unknown_kind(tmp_path: Path) -> None:
+    with pytest.raises(DecisionSchemaError, match="kind"):
+        write_intent(
+            tmp_path / "d.jsonl",
+            kind="explode",
+            symbol="X",
+            ticket=None,
+            setup_type="x",
+            reasoning="r",
+            skills_used=[],
+            guardian_status="CLEAR",
+            checklist_verdict=None,
+            execution=None,
+            charter_version=1,
+            tick_id="2026-04-30T22:00:00Z",
+        )
+
+
+def test_write_intent_rejects_open_without_execution(tmp_path: Path) -> None:
+    with pytest.raises(DecisionSchemaError, match="execution"):
+        write_intent(
+            tmp_path / "d.jsonl",
+            kind="open",
+            symbol="X",
+            ticket=None,
+            setup_type="x",
+            reasoning="r",
+            skills_used=[],
+            guardian_status="CLEAR",
+            checklist_verdict="PASS",
+            execution=None,
+            charter_version=1,
+            tick_id="2026-04-30T22:00:00Z",
+        )
+
+
+def test_write_intent_rejects_open_without_setup_type(tmp_path: Path) -> None:
+    with pytest.raises(DecisionSchemaError, match="setup_type"):
+        write_intent(
+            tmp_path / "d.jsonl",
+            kind="open",
+            symbol="X",
+            ticket=None,
+            setup_type="",
+            reasoning="r",
+            skills_used=[],
+            guardian_status="CLEAR",
+            checklist_verdict="PASS",
+            execution={
+                "side": "BUY", "volume": "0.1", "entry_price": "1.0",
+                "sl": "0.99", "tp": "1.02",
+            },
+            charter_version=1,
+            tick_id="2026-04-30T22:00:00Z",
+        )
+
+
+def test_write_intent_rejects_naive_tick_id(tmp_path: Path) -> None:
+    with pytest.raises(DecisionSchemaError, match="tick_id"):
+        write_intent(
+            tmp_path / "d.jsonl",
+            kind="skip",
+            symbol="X",
+            ticket=None,
+            setup_type="x",
+            reasoning="r",
+            skills_used=[],
+            guardian_status="CLEAR",
+            checklist_verdict="BLOCK",
+            execution=None,
+            charter_version=1,
+            tick_id="2026-04-30T22:00:00",  # missing Z / +00:00
+        )
+
+
+def test_write_intent_rejects_volume_as_float(tmp_path: Path) -> None:
+    with pytest.raises(DecisionSchemaError, match="volume"):
+        write_intent(
+            tmp_path / "d.jsonl",
+            kind="open",
+            symbol="X",
+            ticket=None,
+            setup_type="x",
+            reasoning="r",
+            skills_used=[],
+            guardian_status="CLEAR",
+            checklist_verdict="PASS",
+            execution={
+                "side": "BUY", "volume": 0.08, "entry_price": "1.0",
+                "sl": "0.99", "tp": "1.02",
+            },
+            charter_version=1,
+            tick_id="2026-04-30T22:00:00Z",
+        )
+
+
+def test_allowed_constants() -> None:
+    assert ALLOWED_KINDS == ("open", "modify", "close", "skip", "mode_change")
+    assert "pending" in ALLOWED_EXEC_STATUSES
+    assert "filled" in ALLOWED_EXEC_STATUSES
+    assert "rejected" in ALLOWED_EXEC_STATUSES
+    assert "broker_error" in ALLOWED_EXEC_STATUSES

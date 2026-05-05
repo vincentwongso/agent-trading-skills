@@ -25,6 +25,7 @@ from decimal import Decimal
 from typing import Any, Iterable, Mapping, Optional
 
 from trading_agent_skills.checklist import CalixEarningsEntry, CalixEconomicEvent
+from trading_agent_skills.macro_context import MacroContext
 from trading_agent_skills.indicators import Bar, InsufficientBars, snapshot
 from trading_agent_skills.news_dedup import (
     ClusteredArticle,
@@ -73,6 +74,8 @@ class NewsBriefInput:
     earnings_stale: bool
     articles_by_provider: Mapping[str, list[NewsArticle]]
     provider_status: Mapping[str, str]
+    macro_context: MacroContext | None = None
+    top_movers: dict | None = None
 
 
 # ---------- Outputs --------------------------------------------------------
@@ -96,6 +99,9 @@ class NewsItem:
     published_at_utc: str
     impact: str
     summary: str
+    sentiment_score: float | None = None
+    sentiment_label: str | None = None
+    relevance_score: float | None = None
 
     @classmethod
     def from_cluster(cls, c: ClusteredArticle) -> "NewsItem":
@@ -108,6 +114,9 @@ class NewsItem:
             published_at_utc=primary.published_at_utc.isoformat(),
             impact=primary.impact,
             summary=(primary.summary or "")[:300],
+            sentiment_score=primary.sentiment_score,
+            sentiment_label=primary.sentiment_label,
+            relevance_score=primary.relevance_score,
         )
 
 
@@ -139,6 +148,8 @@ class NewsBriefResult:
     health: dict[str, str]
     flags: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    macro_context: MacroContext | None = None
+    top_movers: dict | None = None
 
 
 # ---------- Helpers --------------------------------------------------------
@@ -499,6 +510,14 @@ def build(inp: NewsBriefInput) -> NewsBriefResult:
             "checklist with extra caution."
         )
 
+    if inp.macro_context is not None and inp.macro_context.staleness_flags:
+        flags.append("AV_MACRO_STALE")
+        notes.append(
+            "Stale macro indicators: "
+            + ", ".join(inp.macro_context.staleness_flags)
+            + " — latest readings may be outdated."
+        )
+
     return NewsBriefResult(
         generated_at_utc=now_utc.isoformat(),
         lookahead_hours=inp.lookahead_hours,
@@ -514,6 +533,8 @@ def build(inp: NewsBriefInput) -> NewsBriefResult:
         health=health,
         flags=flags,
         notes=notes,
+        macro_context=inp.macro_context,
+        top_movers=inp.top_movers,
     )
 
 

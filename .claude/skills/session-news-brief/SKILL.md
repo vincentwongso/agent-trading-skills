@@ -1,11 +1,11 @@
 ---
 name: session-news-brief
-description: Use when the user wants a session-start brief, asks what's happening on a specific symbol, requests overnight news that moved markets, or asks for swing-trade candidates. Triggers on phrases like "morning brief", "news brief for the session", "what's happening on EURUSD", "any news on [symbol] in the last [N] hours", "any swing setups today", "what's moving the metals overnight". Composes Calix calendar + 3-API news fan-out (Finnhub / Marketaux / ForexNews) + ATR/RSI swing-candidates section. Read-only / advisory — never executes.
+description: Use when the user wants a session-start brief, asks what's happening on a specific symbol, requests overnight news that moved markets, or asks for swing-trade candidates. Triggers on phrases like "morning brief", "news brief for the session", "what's happening on EURUSD", "any news on [symbol] in the last [N] hours", "any swing setups today", "what's moving the metals overnight". Composes Calix calendar + 3-API news fan-out (Finnhub / Marketaux / ForexNews) + AlphaVantage macro context & sentiment + ATR/RSI swing-candidates section. Read-only / advisory — never executes.
 ---
 
 # Session News Brief
 
-Combines economic + earnings calendar (Calix), a fan-out across three news APIs with cross-publisher dedup, and a swing-candidates section that surfaces positive-carry setups at technical extremes (UKOIL with Strait of Hormuz tension oversold on D1, EURUSD overbought with negative-carry-on-long → potentially a short, etc.).
+Combines economic + earnings calendar (Calix), a fan-out across three news APIs with cross-publisher dedup, AlphaVantage macro economic context + NLP sentiment enrichment + top movers, and a swing-candidates section that surfaces positive-carry setups at technical extremes.
 
 The skill never executes — output is informational. Use [`pre-trade-checklist`](../pre-trade-checklist/SKILL.md) before entering any trade the brief surfaces.
 
@@ -26,6 +26,7 @@ This is the most setup-heavy skill in the bundle. Before the first invocation, v
    > After signing up, set the key. **Recommended (cross-session, Windows-friendly):** create `~/.trading-agent-skills/.env` with one line per key, e.g. `FINNHUB_API_KEY=abc123`. The CLI auto-loads this file. Alternatively, export in your shell (`export FINNHUB_API_KEY=...` on bash, `$env:FINNHUB_API_KEY=\"...\"` on PowerShell)."
 
 5. **`~/.trading-agent-skills/config.toml`** is auto-generated on first run. Default watchlist is `XAUUSD / XAGUSD / USOIL / UKOIL / NAS100`; the user can edit `watchlist.default` and `watchlist.base_universe`.
+6. **AlphaVantage MCP server (optional).** If the `alphavantage` MCP server is configured, the brief gains three sections: macro economic context (GDP, CPI, yields, unemployment, etc.), NLP sentiment scores on news articles, and top equity gainers/losers/most-active. If the server isn't configured, these sections are silently omitted — the brief runs unchanged.
 
 If (1) or (2) fail, walk the user through the fix before bundling MCP outputs. (4) is non-fatal — proceed and surface the flag in the result.
 
@@ -69,6 +70,31 @@ curl -s "https://calix.fintrixmarkets.com/v1/calendar/earnings/upcoming?limit=30
 ```
 
 If Calix is unreachable or returns 5xx, set `calix.economic_stale = true` (and/or `earnings_stale`) — the brief will surface a `CALIX_DEGRADED` flag rather than silently passing.
+
+### 2b. Fan out AlphaVantage MCP tools (optional, parallel)
+
+If the AlphaVantage MCP server is configured, call these tools in parallel:
+
+**Macro indicators** (one call each):
+- `mcp__alphavantage__TREASURY_YIELD(interval="daily", maturity="10year")`
+- `mcp__alphavantage__FEDERAL_FUNDS_RATE(interval="daily")`
+- `mcp__alphavantage__CPI(interval="monthly")`
+- `mcp__alphavantage__INFLATION(interval="annual")`
+- `mcp__alphavantage__UNEMPLOYMENT(interval="monthly")`
+- `mcp__alphavantage__NONFARM_PAYROLL(interval="monthly")`
+- `mcp__alphavantage__REAL_GDP(interval="quarterly")`
+- `mcp__alphavantage__RETAIL_SALES(interval="monthly")`
+- `mcp__alphavantage__DURABLES(interval="monthly")`
+
+**Sentiment** (one call per watchlist symbol):
+- `mcp__alphavantage__NEWS_SENTIMENT(tickers=<symbol>, time_from=<lookback_iso>)`
+
+**Top movers** (single call):
+- `mcp__alphavantage__TOP_GAINERS_LOSERS()`
+
+If any AV call fails or the MCP server is not configured, skip silently — existing pipeline runs unchanged.
+
+Include the results in the bundle JSON under `"macro_indicators"`, `"av_sentiment"`, and `"top_movers"` keys respectively.
 
 ### 3. Fan out to news providers
 
@@ -192,6 +218,7 @@ Morning brief — 5 symbols watched
 
 ## Health and degraded modes
 
+- `AV_MACRO_STALE` — one or more macro indicators are older than their expected update cadence (e.g. GDP more than 120 days old). The reading is still shown but flagged.
 - `MISSING_NEWS_API_KEY` — at least one provider's env var is unset. Set the missing key(s) for fuller coverage.
 - `NEWS_PROVIDER_DEGRADED` — at least one provider returned an HTTP error or timed out. Re-run after a few minutes; if persistent, that provider may have changed its API.
 - `CALIX_DEGRADED` — Calix self-reported `stale: true` or returned a 5xx. The calendar-overlay section is from the prior cache; news-proximity in the checklist will WARN until it refreshes.

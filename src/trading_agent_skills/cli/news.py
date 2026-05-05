@@ -87,6 +87,8 @@ from trading_agent_skills.news_clients import (
 )
 from trading_agent_skills.news_dedup import NewsArticle, canonicalise_url, classify_impact
 from trading_agent_skills.symbol_meta import constituents_of
+from trading_agent_skills.av_sentiment import enrich_articles_with_sentiment
+from trading_agent_skills.macro_context import build_macro_context
 from trading_agent_skills.watchlist import (
     calendar_driven_symbols,
     resolve_watchlist,
@@ -353,6 +355,23 @@ def main(argv: list[str] | None = None) -> int:
                 symbol_meta=symbol_meta,
                 lookback_hours=lookback,
             )
+
+        # AlphaVantage sentiment enrichment
+        av_sentiment_raw = bundle.get("av_sentiment")
+        if av_sentiment_raw:
+            flat = [a for arts in articles_by_provider.values() for a in arts]
+            enriched = enrich_articles_with_sentiment(flat, av_sentiment_raw)
+            articles_by_provider = {"all": enriched}
+            provider_status["alphavantage"] = "ok"
+
+        # AlphaVantage macro indicators
+        macro_raw = bundle.get("macro_indicators")
+        macro_ctx = None
+        if macro_raw:
+            macro_ctx = build_macro_context(macro_raw)
+
+        # AlphaVantage top movers
+        top_movers = bundle.get("top_movers")
     except (KeyError, TypeError, ValueError) as exc:
         print(f"ERROR: malformed input bundle: {exc}", file=sys.stderr)
         return 1
@@ -370,6 +389,8 @@ def main(argv: list[str] | None = None) -> int:
         earnings_stale=earnings_stale,
         articles_by_provider=articles_by_provider,
         provider_status=provider_status,
+        macro_context=macro_ctx,
+        top_movers=top_movers,
     )
     result = build(inp)
 

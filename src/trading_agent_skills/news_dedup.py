@@ -39,6 +39,9 @@ class NewsArticle:
     symbols: tuple[str, ...]   # broker-format if mappable, else raw tickers
     keywords: tuple[str, ...]
     impact: str          # "high" / "medium" / "low"
+    sentiment_score: float | None = None    # AV ticker_sentiment_score (-1 to +1)
+    sentiment_label: str | None = None      # "Bullish" / "Bearish" / "Neutral"
+    relevance_score: float | None = None    # AV relevance_score (0 to 1)
 
 
 @dataclass(frozen=True)

@@ -11,15 +11,18 @@ trading loop:
 - ✅ `position-sizer` — lot sizing + margin cross-check + swap-aware output
 - ✅ `trade-journal` — append-only JSONL with R-multiple, swap-only P&L, swing-trade lens
 - ✅ `daily-risk-guardian` + `pre-trade-checklist` (paired) — NY-close session reset, LLM-judged AT_RISK predicate, Calix proximity, EWMA spread baseline
-- ✅ `session-news-brief` — 5-tier watchlist resolver, 3-API news fan-out + dedup, ATR/RSI swing candidates, Calix calendar overlay
+- ✅ `session-news-brief` — 5-tier watchlist resolver, 3-API news fan-out + dedup, ATR/RSI swing candidates, Calix calendar overlay, AlphaVantage macro context + NLP sentiment + top movers
 - ✅ `price-action` — hybrid classical + ICT structural reader, 9 detectors, structural quality scoring, hands off to checklist + sizer
 - ✅ `trading-heartbeat` — autonomous tick orchestrator (composes the 6 above)
 - ✅ `strategy-review` — weekly retrospective + user-gated charter tuning
 - ✅ `trade-journal decision` subcommand — intent/outcome reasoning trail
 - ✅ Per-account state namespacing under `~/.trading-agent-skills/accounts/<id>/`
 - ✅ Operating charter (hard caps + soft fields) with version archival
+- ✅ `equity-fundamentals` — standalone SKILL.md, AlphaVantage MCP direct (company overview, financials, earnings)
+- ✅ `insider-institutional` — standalone SKILL.md, AlphaVantage MCP direct (insider transactions, institutional holdings)
+- ✅ `options-data` — standalone SKILL.md, AlphaVantage MCP direct (realtime/historical chains + Greeks + FMV)
 
-443 pytest cases passing in ~1.0s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`. End-to-end live broker smoke test still pending (user said "I will test everything all in one at the end").
+590 pytest cases passing in ~1.0s. Repo published to `git@github.com:vincentwongso/agent-trading-skills.git`. End-to-end live broker smoke test still pending (user said "I will test everything all in one at the end").
 
 ## Architecture in one paragraph
 
@@ -50,6 +53,8 @@ src/trading_agent_skills/        # pure-Python, Decimal-typed, no I/O at the pac
   watchlist.py         # skill 4 5-tier resolver (explicit / positions / calendar / vol / default)
   news_clients.py      # skill 4 Finnhub / Marketaux / ForexNews httpx clients
   news_brief.py        # skill 4 session-news-brief orchestrator
+  macro_context.py     # AV economic indicators → direction + staleness
+  av_sentiment.py      # AV NEWS_SENTIMENT → article enrichment + 4th source
   price_action/        # skill 5 sub-package: bars, pivots, structure, fvg, order_block,
                        # liquidity, context, scoring, schema, scan, detectors/{9 files}
   account_paths.py     # per-account namespace resolver
@@ -67,6 +72,9 @@ src/trading_agent_skills/        # pure-Python, Decimal-typed, no I/O at the pac
   price-action/SKILL.md + scripts/price_action.py
   trading-heartbeat/SKILL.md
   strategy-review/SKILL.md
+  equity-fundamentals/SKILL.md           # standalone, AV MCP direct
+  insider-institutional/SKILL.md         # standalone, AV MCP direct
+  options-data/SKILL.md                  # standalone, AV MCP direct
 tests/                 # pytest, no live broker required
 ~/.trading-agent-skills/         # runtime files (not committed):
   journal.jsonl        # trade journal
@@ -101,6 +109,8 @@ The news CLI also auto-loads a `.env` file (zero-dep loader, `os.environ.setdefa
 3. `./.env` (repo-local override)
 
 `.env.example` at the repo root is committed; `.env` is in `.gitignore`. PowerShell users prefer this over `export` (which is bash-only).
+
+**AlphaVantage MCP** is configured at the MCP server level (API key in the server config, not in env vars or code). When the server is absent, all AV-dependent features degrade gracefully — the news brief runs without macro context, sentiment, or top movers; standalone skills (fundamentals, insider, options) instruct the user to configure the server.
 
 ## Quick commands
 

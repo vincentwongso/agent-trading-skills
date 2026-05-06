@@ -1,6 +1,6 @@
 ---
 name: daily-risk-guardian
-description: Use when the user asks about today's risk status, whether they're clear to take another trade, how much they've lost today, or to assess at-risk vs risk-free open positions against their daily loss cap. Triggers on phrases like "what's my risk status today", "am I clear to take another trade", "how much have I lost today", "what's my drawdown right now", "show me the daily guardian". Composes today's realized P&L (since NY 4pm ET) with the worst-case drawdown from open AT_RISK positions and surfaces a CLEAR / CAUTION / HALT verdict. Read-only / advisory — never executes.
+description: Use when the user asks about today's risk status, daily P&L, drawdown, or whether they're clear to take another trade. Returns CLEAR/CAUTION/HALT against the daily loss cap. Read-only.
 ---
 
 # Daily Risk Guardian

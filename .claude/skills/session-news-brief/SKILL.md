@@ -1,6 +1,6 @@
 ---
 name: session-news-brief
-description: Use when the user wants a session-start brief, asks what's happening on a specific symbol, requests overnight news that moved markets, or asks for swing-trade candidates. Triggers on phrases like "morning brief", "news brief for the session", "what's happening on EURUSD", "any news on [symbol] in the last [N] hours", "any swing setups today", "what's moving the metals overnight". Composes Calix calendar + 3-API news fan-out (Finnhub / Marketaux / ForexNews) + AlphaVantage macro context & sentiment + ATR/RSI swing-candidates section. Read-only / advisory — never executes.
+description: Use when the user wants a session-start brief, asks what's happening on a symbol, wants overnight market-moving news, or wants swing-trade candidates. Read-only.
 ---
 
 # Session News Brief

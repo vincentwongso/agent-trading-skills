@@ -1,6 +1,6 @@
 ---
 name: strategy-review
-description: Use when the user asks for a weekly strategy review, performance analysis, or wants to refine the autonomous-trading charter based on recent results. Triggers on phrases like "weekly review", "strategy review", "how did this week go for the agent", "should we tweak the charter". Reads journal + decision-log + spread baselines for the active account, builds a markdown proposal with structural recommendations, asks the user which changes to apply, then bumps the charter version. Never auto-applies. Cannot propose changes to mode (demo↔live) or account_id — those are user-initiated only.
+description: Use when the user asks for a weekly strategy review, performance analysis, or wants to tune the autonomous-trading charter from recent results. Proposes charter changes; never auto-applies; cannot change mode or account_id.
 ---
 
 # strategy-review — weekly retrospective + charter tuning

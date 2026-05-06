@@ -1,6 +1,6 @@
 ---
 name: position-sizer
-description: Use when the user asks how big a Forex/index/metals trade should be, what lot size to use for a given risk, or wants a pre-trade sanity check on margin / swap / stop distance. Triggers on phrases like "size me into [symbol]", "what lot size for [N]% risk", "how big should I trade [symbol]", "lot size with stop at [price]", "is this stop too tight". Computes lot size from account equity + target risk + stop distance using the broker-authoritative tick_value, cross-checks margin against the broker's calc_margin tool, and surfaces an overnight-swap section. Read-only / advisory — never executes; use mt5-trading skill for execution.
+description: Use when the user asks how big a Forex/index/metals trade should be, what lot size for a given risk %, or wants a margin/swap/stop sanity check pre-entry. Returns lot size with broker margin cross-check. Does not execute.
 ---
 
 # Position Sizer

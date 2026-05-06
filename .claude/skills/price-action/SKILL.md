@@ -1,6 +1,6 @@
 ---
 name: price-action
-description: Use when the user asks for a price-action read, structural setup, bias on a symbol, or wants to see what setups are present right now. Triggers on phrases like "what's the setup on [symbol]", "is there a long setup on [symbol]", "give me a price action read on [symbol]", "show me the structure on [symbol]", "any swing setup on [symbol]", "bias on [symbol]". Composes per-TF pivots + S/R + FVG + OB + liquidity-pool detection with 9 setup detectors (pullback-EMA, S/R bounce, pin bar, engulfing, range-break retest, FVG fill, OB retest, liq-sweep reversal, BOS pullback) and emits 0-3 ranked candidates plus full structure for downstream pre-trade-checklist and position-sizer. Read-only / advisory — never executes.
+description: Use when the user asks for a price-action read, structural setup, bias, or any setups present on a symbol right now. Returns 0-3 ranked candidates plus structure (pivots, S/R, FVG, OB, liquidity). Read-only.
 ---
 
 # Price Action Read

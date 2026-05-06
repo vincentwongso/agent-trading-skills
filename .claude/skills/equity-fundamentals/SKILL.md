@@ -1,6 +1,6 @@
 ---
 name: equity-fundamentals
-description: Use when the user asks for equity fundamental analysis, company financials, P/E ratio, earnings, balance sheet, income statement, or cash flow for a stock ticker. Triggers on phrases like "fundamentals for AAPL", "show me TSLA's balance sheet", "what's NVDA's P/E ratio", "income statement for MSFT", "how's AMZN doing financially", "compare AAPL and MSFT fundamentals". Calls AlphaVantage MCP tools directly — no Python CLI layer. Read-only / advisory — never executes trades.
+description: Use when the user asks for equity fundamentals — financials, P/E, earnings, balance sheet, income statement, or cash flow for a stock ticker. Read-only.
 ---
 
 # Equity Fundamentals

@@ -1,6 +1,6 @@
 ---
 name: pre-trade-checklist
-description: Use when the user asks whether they can take a specific trade, wants a structured pre-entry sanity check, or wants to verify that a candidate position passes their rules. Triggers on phrases like "can I take a long on [symbol]", "check my rules for [symbol] entry", "pre-trade check for [symbol]", "is it safe to enter [symbol] now", "should I take [symbol] [long/short] here". Composes daily-risk-guardian with Calix calendar proximity, session timing, exposure overlap, and spread-baseline checks; returns PASS / WARN / BLOCK + per-check breakdown. Read-only / advisory — never executes.
+description: Use when the user asks whether they can take a specific trade or wants a pre-entry sanity check on a candidate position. Returns PASS/WARN/BLOCK with per-check breakdown. Read-only.
 ---
 
 # Pre-trade Checklist

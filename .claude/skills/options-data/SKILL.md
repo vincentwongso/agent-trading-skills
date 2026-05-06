@@ -1,6 +1,6 @@
 ---
 name: options-data
-description: Use when the user asks for options chain data, options pricing, implied volatility, Greeks, fair market value, or historical options for a symbol. Triggers on phrases like "options chain for SPY", "show me AAPL options", "what's the options pricing on TSLA", "historical options for NVDA on 2026-04-30", "fair value on SPY options", "IV on AAPL calls", "raw options data for SPY". Calls AlphaVantage MCP tools directly — no Python CLI layer. Designed as a raw data access layer for future ML/quant consumption. Read-only / advisory — never executes trades.
+description: Use when the user asks for options chains, options pricing, implied volatility, Greeks, or fair market value on a symbol (current or historical). Read-only.
 ---
 
 # Options Data

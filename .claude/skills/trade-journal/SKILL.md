@@ -1,6 +1,6 @@
 ---
 name: trade-journal
-description: Use when the user wants to log a completed trade, add a post-trade reflection to a previous trade, or query their performance history (win rate, R-multiple, P&L by setup or symbol, swap-harvest performance). Triggers on phrases like "journal this trade", "log my last [symbol] trade", "show me my trade journal for [period]", "what's my win rate on [setup type]", "how much swap have I earned this month", "add a note to my last trade". Works on a local append-only JSONL at ~/.trading-agent-skills/journal.jsonl — never mutates broker state.
+description: Use when the user wants to log a completed trade, add a post-trade reflection, or query trade-history performance (win rate, R-multiple, P&L, swap). Local append-only JSONL; never touches broker state.
 ---
 
 # Trade Journal

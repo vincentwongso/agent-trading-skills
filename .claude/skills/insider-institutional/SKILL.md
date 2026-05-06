@@ -1,6 +1,6 @@
 ---
 name: insider-institutional
-description: Use when the user asks about insider transactions, institutional holdings, smart money flow, or who is buying/selling a stock. Triggers on phrases like "any insider activity on AAPL", "who's buying TSLA shares", "institutional holders of NVDA", "insider transactions for MSFT this quarter", "show me smart money on AMZN". Calls AlphaVantage MCP tools directly — no Python CLI layer. Read-only / advisory — never executes trades.
+description: Use when the user asks about insider transactions, institutional holdings, or smart-money flow on a stock. Read-only.
 ---
 
 # Insider & Institutional

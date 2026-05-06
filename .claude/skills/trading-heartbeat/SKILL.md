@@ -1,6 +1,6 @@
 ---
 name: trading-heartbeat
-description: Use to run one autonomous trading cycle (a "tick") on a configured demo MT5 account. Triggered by the harness on a recurring schedule matching the charter's heartbeat (15m / 1h / 4h via /loop, OpenClaw cron, or Hermes heartbeat). Each tick reads the operating charter, checks kill conditions (guardian HALT, market closed, broker unreachable), manages open positions (close/modify based on structural re-evaluation), and scans for new entries through pre-trade-checklist + position-sizer. Every action — and every evaluated-but-skipped candidate — is logged to the decision log with reasoning. Trade execution uses mt5-mcp (place_order / close_position / modify_order). Read-write to the demo account; never operates on live mode unless charter.mode is explicitly "live".
+description: Use to execute one autonomous trading tick on the configured MT5 account — manages open positions, scans for new entries, logs every decision. Fired by harness schedule (cron, /loop, or heartbeat) or manually via /trading-heartbeat. Places orders. Operates on live only when charter.mode == "live".
 ---
 
 # trading-heartbeat — autonomous tick

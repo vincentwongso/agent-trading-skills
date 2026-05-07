@@ -11,10 +11,15 @@ from trading_agent_skills.journal_io import (
     SchemaError,
     default_journal_path,
     filter_resolved,
+    find_uuid_by_ticket,
     read_raw,
     read_resolved,
+    read_resolved_with_events,
     suggest_tags,
+    write_close,
     write_open,
+    write_partial_closed,
+    write_sl_trailed,
     write_update,
 )
 
@@ -343,3 +348,176 @@ def test_default_path_without_account_id_is_legacy(tmp_path, monkeypatch) -> Non
     path = default_journal_path(account_id=None)
     expected = tmp_path / ".trading-agent-skills" / "journal.jsonl"
     assert path == expected
+
+
+# --- Stage 3 events --------------------------------------------------------
+
+
+def test_write_sl_trailed_appends_event(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    write_sl_trailed(
+        journal,
+        uuid=uid,
+        old_sl="74.62",
+        new_sl="75.42",
+        reason="1R reached, lock breakeven",
+        old_tp="78.00",
+        new_tp="78.00",
+        paper_mode=False,
+    )
+    raw = read_raw(journal)
+    assert len(raw) == 2
+    ev = raw[1]
+    assert ev["type"] == "sl-trailed"
+    assert ev["uuid"] == uid
+    assert ev["old_sl"] == "74.62"
+    assert ev["new_sl"] == "75.42"
+    assert ev["reason"] == "1R reached, lock breakeven"
+    assert ev["paper_mode"] is False
+    assert "ts" in ev
+
+
+def test_write_sl_trailed_optional_tp_omitted(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    write_sl_trailed(journal, uuid=uid, old_sl="74.62", new_sl="75.42", reason="trail")
+    raw = read_raw(journal)
+    assert raw[1]["old_tp"] is None
+    assert raw[1]["new_tp"] is None
+
+
+def test_write_sl_trailed_rejects_empty_reason(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    with pytest.raises(SchemaError, match="reason"):
+        write_sl_trailed(journal, uuid=uid, old_sl="74.62", new_sl="75.42", reason="")
+
+
+def test_write_partial_closed_appends_event(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    write_partial_closed(
+        journal,
+        uuid=uid,
+        closed_lots="0.5",
+        remaining_lots="0.5",
+        realized_pnl="134.00",
+        reason="2R, take half",
+        paper_mode=True,
+    )
+    raw = read_raw(journal)
+    assert raw[1]["type"] == "partial-closed"
+    assert raw[1]["closed_lots"] == "0.5"
+    assert raw[1]["remaining_lots"] == "0.5"
+    assert raw[1]["realized_pnl"] == "134.00"
+    assert raw[1]["paper_mode"] is True
+
+
+def test_write_partial_closed_rejects_empty_reason(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    with pytest.raises(SchemaError, match="reason"):
+        write_partial_closed(
+            journal, uuid=uid, closed_lots="0.5", remaining_lots="0.5",
+            realized_pnl="134.00", reason="",
+        )
+
+
+def test_write_close_invalidation(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    write_close(
+        journal,
+        uuid=uid,
+        exit_price="76.20",
+        realized_pnl="78.00",
+        close_kind="invalidation",
+        reason="H4 lower-low printed; thesis broken",
+    )
+    raw = read_raw(journal)
+    assert raw[1]["type"] == "closed"
+    assert raw[1]["close_kind"] == "invalidation"
+    assert raw[1]["exit_price"] == "76.20"
+
+
+def test_write_close_manual(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    write_close(
+        journal, uuid=uid, exit_price="76.20", realized_pnl="78.00",
+        close_kind="manual", reason="discretionary"
+    )
+    assert read_raw(journal)[1]["close_kind"] == "manual"
+
+
+def test_write_close_rejects_invalid_kind(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    with pytest.raises(SchemaError, match="close_kind"):
+        write_close(
+            journal, uuid=uid, exit_price="76.20", realized_pnl="78.00",
+            close_kind="garbage", reason="x",
+        )
+
+
+def test_read_resolved_ignores_stage3_events(tmp_path: Path):
+    """Existing read_resolved consumers don't see Stage 3 events — only opens+updates."""
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    write_sl_trailed(journal, uuid=uid, old_sl="74.62", new_sl="75.42", reason="trail")
+    write_partial_closed(
+        journal, uuid=uid, closed_lots="0.5", remaining_lots="0.5",
+        realized_pnl="134.00", reason="half",
+    )
+    resolved = read_resolved(journal)
+    assert len(resolved) == 1
+    assert resolved[0]["uuid"] == uid
+    # Stage 3 fields don't leak into the resolved open
+    assert "old_sl" not in resolved[0]
+    assert "closed_lots" not in resolved[0]
+
+
+def test_read_resolved_with_events_attaches_chronologically(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid = write_open(journal, **_open_kwargs())
+    write_sl_trailed(journal, uuid=uid, old_sl="74.62", new_sl="75.42", reason="be")
+    write_partial_closed(
+        journal, uuid=uid, closed_lots="0.5", remaining_lots="0.5",
+        realized_pnl="134.00", reason="half",
+    )
+    write_close(
+        journal, uuid=uid, exit_price="76.20", realized_pnl="78.00",
+        close_kind="invalidation", reason="thesis broken",
+    )
+    resolved = read_resolved_with_events(journal)
+    assert len(resolved) == 1
+    events = resolved[0]["_events"]
+    assert [e["type"] for e in events] == ["sl-trailed", "partial-closed", "closed"]
+
+
+def test_read_resolved_with_events_empty_for_no_stage3_events(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    write_open(journal, **_open_kwargs())
+    resolved = read_resolved_with_events(journal)
+    assert resolved[0]["_events"] == []
+
+
+def test_find_uuid_by_ticket_returns_uuid(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    uid_a = write_open(journal, **_open_kwargs(ticket=100))
+    write_open(journal, **_open_kwargs(ticket=200, symbol="XAUUSD"))
+    assert find_uuid_by_ticket(journal, 100) == uid_a
+
+
+def test_find_uuid_by_ticket_returns_latest_when_reused(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    write_open(journal, **_open_kwargs(ticket=100))
+    uid_b = write_open(journal, **_open_kwargs(ticket=100, symbol="XAUUSD"))
+    assert find_uuid_by_ticket(journal, 100) == uid_b
+
+
+def test_find_uuid_by_ticket_returns_none_when_missing(tmp_path: Path):
+    journal = tmp_path / "journal.jsonl"
+    write_open(journal, **_open_kwargs(ticket=100))
+    assert find_uuid_by_ticket(journal, 999) is None

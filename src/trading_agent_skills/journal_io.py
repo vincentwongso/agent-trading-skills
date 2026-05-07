@@ -36,6 +36,7 @@ from trading_agent_skills.decimal_io import D
 SCHEMA_VERSION = 1
 ALLOWED_RISK_CLASSIFICATIONS = ("AT_RISK", "RISK_FREE", "LOCKED_PROFIT")
 ALLOWED_SIDES = ("buy", "sell")
+ALLOWED_CLOSE_KINDS = ("invalidation", "manual")
 
 # Fields stored as Decimal (serialised as fixed-point strings).
 _DECIMAL_FIELDS = {
@@ -215,6 +216,103 @@ def write_update(
     _append_line(path, record)
 
 
+def write_sl_trailed(
+    path: Path | str,
+    *,
+    uuid: str,
+    old_sl: Decimal | str,
+    new_sl: Decimal | str,
+    reason: str,
+    old_tp: Decimal | str | None = None,
+    new_tp: Decimal | str | None = None,
+    paper_mode: bool = False,
+) -> None:
+    """Append an ``sl-trailed`` event referencing an existing ``open`` uuid.
+
+    Stage 3 (position management) records SL adjustments as discrete events
+    so trail-history can be reconstructed. Existing ``read_resolved`` ignores
+    these events; ``read_resolved_with_events`` attaches them to the parent
+    open as ``_events: [...]``.
+    """
+    if not reason:
+        raise SchemaError("reason is required for sl-trailed event")
+    record: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "uuid": uuid,
+        "type": "sl-trailed",
+        "ts": _now_iso(),
+        "old_sl": _decimal_str(old_sl, "old_sl"),
+        "new_sl": _decimal_str(new_sl, "new_sl"),
+        "old_tp": _decimal_str(old_tp, "old_tp") if old_tp is not None else None,
+        "new_tp": _decimal_str(new_tp, "new_tp") if new_tp is not None else None,
+        "reason": reason,
+        "paper_mode": bool(paper_mode),
+    }
+    _append_line(path, record)
+
+
+def write_partial_closed(
+    path: Path | str,
+    *,
+    uuid: str,
+    closed_lots: Decimal | str,
+    remaining_lots: Decimal | str,
+    realized_pnl: Decimal | str,
+    reason: str,
+    paper_mode: bool = False,
+) -> None:
+    """Append a ``partial-closed`` event referencing an existing ``open`` uuid."""
+    if not reason:
+        raise SchemaError("reason is required for partial-closed event")
+    record: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "uuid": uuid,
+        "type": "partial-closed",
+        "ts": _now_iso(),
+        "closed_lots": _decimal_str(closed_lots, "closed_lots"),
+        "remaining_lots": _decimal_str(remaining_lots, "remaining_lots"),
+        "realized_pnl": _decimal_str(realized_pnl, "realized_pnl"),
+        "reason": reason,
+        "paper_mode": bool(paper_mode),
+    }
+    _append_line(path, record)
+
+
+def write_close(
+    path: Path | str,
+    *,
+    uuid: str,
+    exit_price: Decimal | str,
+    realized_pnl: Decimal | str,
+    close_kind: str,
+    reason: str,
+    paper_mode: bool = False,
+) -> None:
+    """Append a ``closed`` event referencing an existing ``open`` uuid.
+
+    ``close_kind`` is one of ``invalidation`` (thesis broken before SL hit) or
+    ``manual`` (discretionary close not driven by structural invalidation).
+    """
+    if close_kind not in ALLOWED_CLOSE_KINDS:
+        raise SchemaError(
+            f"close_kind must be one of {ALLOWED_CLOSE_KINDS}, got {close_kind!r}"
+        )
+    if not reason:
+        raise SchemaError("reason is required for closed event")
+    record: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "uuid": uuid,
+        "type": "closed",
+        "ts": _now_iso(),
+        "exit_price": _decimal_str(exit_price, "exit_price"),
+        "realized_pnl": _decimal_str(realized_pnl, "realized_pnl"),
+        "close_kind": close_kind,
+        "reason": reason,
+        "paper_mode": bool(paper_mode),
+    }
+    _append_line(path, record)
+
+
 def _append_line(path: Path | str, record: dict[str, Any]) -> None:
     """Append a JSON line, flush, fsync. Creates parent dirs if missing."""
     p = Path(path).expanduser()
@@ -289,6 +387,41 @@ def read_resolved(path: Path | str) -> list[dict[str, Any]]:
         by_uuid.values(),
         key=lambda r: r.get("entry_time", ""),
     )
+
+
+_STAGE3_EVENT_TYPES = ("sl-trailed", "partial-closed", "closed")
+
+
+def read_resolved_with_events(path: Path | str) -> list[dict[str, Any]]:
+    """Like ``read_resolved`` but also attaches Stage 3 events under ``_events``.
+
+    Each open record gets ``_events: list[dict]`` containing chronologically
+    ordered ``sl-trailed`` / ``partial-closed`` / ``closed`` records that
+    reference the open's uuid. Records with no Stage 3 events get an empty list.
+    """
+    resolved = {r["uuid"]: r for r in read_resolved(path)}
+    raw = read_raw(path)
+    events_by_uuid: dict[str, list[dict[str, Any]]] = {uid: [] for uid in resolved}
+    for rec in raw:
+        if rec.get("type") not in _STAGE3_EVENT_TYPES:
+            continue
+        uid = rec.get("uuid")
+        if uid in events_by_uuid:
+            events_by_uuid[uid].append(rec)
+    for uid, events in events_by_uuid.items():
+        events.sort(key=lambda e: e.get("ts", ""))
+        resolved[uid]["_events"] = events
+    return sorted(resolved.values(), key=lambda r: r.get("entry_time", ""))
+
+
+def find_uuid_by_ticket(path: Path | str, ticket: int) -> Optional[str]:
+    """Return the uuid of the latest ``open`` record with the given ticket, or None."""
+    raw = read_raw(path)
+    last_uid: Optional[str] = None
+    for rec in raw:
+        if rec.get("type") == "open" and rec.get("ticket") == ticket:
+            last_uid = rec.get("uuid")
+    return last_uid
 
 
 # --- filter / suggest ------------------------------------------------------

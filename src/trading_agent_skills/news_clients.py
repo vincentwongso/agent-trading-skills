@@ -357,8 +357,113 @@ def _forexnews_to_article(blob: dict[str, Any]) -> NewsArticle:
     )
 
 
+# ---------- AlphaVantage NEWS_SENTIMENT ------------------------------------
+
+
+@dataclass
+class AlphaVantageNewsClient(NewsClientBase):
+    """AlphaVantage NEWS_SENTIMENT REST endpoint.
+
+    Endpoint: https://www.alphavantage.co/query
+    Free tier: 25 requests/day. Premium ($50/mo) lifts to 75/min.
+    """
+    name: str = "alphavantage"
+    api_key_env_var: str = "ALPHAVANTAGE_API_KEY"
+    base_url: str = "https://www.alphavantage.co"
+
+    def fetch(
+        self,
+        *,
+        topics: Iterable[str] = (),
+        lookback_hours: int = 1,
+        limit: int = 50,
+    ) -> tuple[list[NewsArticle], str]:
+        key = self._resolve_key()
+        if not key:
+            return [], "no_api_key"
+        topics_param = ",".join(sorted({t for t in topics if t}))
+        time_from = (
+            datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+        ).strftime("%Y%m%dT%H%M")
+        params: dict[str, Any] = {
+            "function": "NEWS_SENTIMENT",
+            "topics": topics_param,
+            "time_from": time_from,
+            "limit": str(min(limit, 1000)),
+            "apikey": key,
+        }
+        cache_id = _cache_key(
+            self.name, {"t": topics_param, "h": lookback_hours, "n": limit},
+        )
+        cached = _read_cache(self.cache_dir, cache_id, self.cache_seconds)
+        if cached is not None:
+            return [_av_to_article(b) for b in cached], "cache"
+
+        payload, status = self._http_get("/query", params)
+        if status != "ok" or not isinstance(payload, dict):
+            return [], status if status != "ok" else "schema_error"
+        feed = payload.get("feed") or []
+        if not isinstance(feed, list):
+            return [], "schema_error"
+        _write_cache(self.cache_dir, cache_id, feed)
+        return [_av_to_article(b) for b in feed], "ok"
+
+
+def _av_to_article(blob: dict[str, Any]) -> NewsArticle:
+    title = str(blob.get("title", "")).strip()
+    summary = str(blob.get("summary", "")).strip()
+    url = str(blob.get("url", "")).strip()
+    publisher = str(blob.get("source", "")).strip()
+    raw_pub = blob.get("time_published") or ""
+    try:
+        # AV format: 20260509T013000
+        published = datetime.strptime(str(raw_pub), "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        published = datetime.now(timezone.utc)
+    overall = blob.get("overall_sentiment_score")
+    sentiment_score = float(overall) if isinstance(overall, (int, float)) else None
+    sentiment_label = blob.get("overall_sentiment_label") or None
+
+    # Aggregate ticker_sentiment to derive symbols + best (max-relevance) score
+    ticker_sentiment = blob.get("ticker_sentiment") or []
+    symbols: list[str] = []
+    best_relevance: float | None = None
+    if isinstance(ticker_sentiment, list):
+        for ts in ticker_sentiment:
+            if not isinstance(ts, dict):
+                continue
+            ticker = str(ts.get("ticker", "")).strip().upper()
+            if ticker.startswith("FOREX:"):
+                ticker = ticker.split(":", 1)[1]
+            if ticker:
+                symbols.append(ticker)
+            try:
+                rel = float(ts.get("relevance_score"))
+                if best_relevance is None or rel > best_relevance:
+                    best_relevance = rel
+            except (TypeError, ValueError):
+                pass
+
+    return NewsArticle(
+        title=title,
+        summary=summary,
+        url=url,
+        canonical_url=canonicalise_url(url),
+        published_at_utc=published,
+        source="alphavantage",
+        publisher=publisher,
+        symbols=tuple(dict.fromkeys(symbols)),
+        keywords=(),
+        impact=classify_impact(title, summary),
+        sentiment_score=sentiment_score,
+        sentiment_label=str(sentiment_label) if sentiment_label else None,
+        relevance_score=best_relevance,
+    )
+
+
 __all__ = [
     "FinnhubClient",
     "MarketauxClient",
     "ForexNewsClient",
+    "AlphaVantageNewsClient",
 ]

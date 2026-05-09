@@ -134,3 +134,15 @@ def test_av_handles_missing_ticker_sentiment(tmp_path: Path) -> None:
     articles, _ = _client(handler, tmp_path).fetch(topics=["economy_macro"], lookback_hours=1)
     assert articles[0].symbols == ()
     assert articles[0].relevance_score is None
+
+
+def test_av_handles_string_encoded_sentiment_score(tmp_path: Path) -> None:
+    """AV often returns numeric fields as strings; parser must handle that."""
+    item = _av_item()
+    item["overall_sentiment_score"] = "-0.55"
+
+    def handler(_r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_av_response([item]))
+
+    articles, _ = _client(handler, tmp_path).fetch(topics=["economy_macro"], lookback_hours=1)
+    assert articles[0].sentiment_score == -0.55

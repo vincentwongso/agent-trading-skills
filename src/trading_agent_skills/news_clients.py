@@ -421,7 +421,10 @@ def _av_to_article(blob: dict[str, Any]) -> NewsArticle:
     except (ValueError, TypeError):
         published = datetime.now(timezone.utc)
     overall = blob.get("overall_sentiment_score")
-    sentiment_score = float(overall) if isinstance(overall, (int, float)) else None
+    try:
+        sentiment_score = float(overall) if overall is not None else None
+    except (TypeError, ValueError):
+        sentiment_score = None
     sentiment_label = blob.get("overall_sentiment_label") or None
 
     # Aggregate ticker_sentiment to derive symbols + best (max-relevance) score

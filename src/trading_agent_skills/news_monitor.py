@@ -172,6 +172,140 @@ def write_state(
     os.replace(tmp, path)
 
 
+# ---------- Orchestrator ---------------------------------------------------
+
+
+@dataclass(frozen=True)
+class PushEvent:
+    event_id: str
+    headline: str
+    summary: str
+    sources: tuple[str, ...]
+    symbols_implicated: tuple[str, ...]
+    impact: str  # "high"
+    sentiment_score: float | None
+    relevance_score: float | None
+    urls: tuple[str, ...]
+    published_at_utc: datetime
+    severity_reason: str  # "keyword" / "sentiment" / "both"
+
+
+@dataclass
+class NewsMonitorInput:
+    now_utc: datetime
+    lookback_minutes: int
+    state_path: Path
+    state_ttl_hours: int
+    thresholds: SeverityThresholds
+    clients: dict  # {"finnhub": FinnhubClient, ...}
+
+
+@dataclass(frozen=True)
+class NewsMonitorResult:
+    events: list[PushEvent]
+    provider_health: dict[str, str]
+    flags: list[str]
+
+
+_DEFAULT_AV_TOPICS = ("economy_macro", "financial_markets", "energy_transportation")
+_DEFAULT_MARKETAUX_SYMBOLS = ()  # MM watchlist not piped in; use general-news mode
+_DEFAULT_FOREXNEWS_PAIRS = ("EUR-USD", "XAU-USD", "GBP-USD")
+
+
+def monitor(inp: NewsMonitorInput) -> NewsMonitorResult:
+    """Fetch fresh news, classify, dedup, return new push-grade events."""
+    from trading_agent_skills.news_dedup import dedupe_articles
+
+    lookback_hours = max(1, (inp.lookback_minutes + 59) // 60)
+
+    health: dict[str, str] = {}
+    articles_by_provider: dict[str, list[NewsArticle]] = {}
+
+    fc = inp.clients.get("finnhub")
+    if fc is not None:
+        arts, status = fc.fetch_general(lookback_hours=lookback_hours)
+        articles_by_provider["finnhub"] = list(arts)
+        health["finnhub"] = status
+
+    mc = inp.clients.get("marketaux")
+    if mc is not None:
+        arts, status = mc.fetch(symbols=_DEFAULT_MARKETAUX_SYMBOLS,
+                                lookback_hours=lookback_hours)
+        articles_by_provider["marketaux"] = list(arts)
+        health["marketaux"] = status
+
+    fnc = inp.clients.get("forexnews")
+    if fnc is not None:
+        arts, status = fnc.fetch(currencypairs=_DEFAULT_FOREXNEWS_PAIRS)
+        articles_by_provider["forexnews"] = list(arts)
+        health["forexnews"] = status
+
+    av = inp.clients.get("alphavantage")
+    if av is not None:
+        arts, status = av.fetch(topics=_DEFAULT_AV_TOPICS,
+                                lookback_hours=lookback_hours)
+        articles_by_provider["alphavantage"] = list(arts)
+        health["alphavantage"] = status
+
+    flags: list[str] = []
+    healthy = [s for s in health.values() if s in ("ok", "cache")]
+    if health and not healthy:
+        flags.append("NEWS_PROVIDER_ALL_DEGRADED")
+        return NewsMonitorResult(events=[], provider_health=health, flags=flags)
+
+    flat: list[NewsArticle] = []
+    for arts in articles_by_provider.values():
+        flat.extend(arts)
+    if not flat:
+        return NewsMonitorResult(events=[], provider_health=health, flags=flags)
+
+    clusters = dedupe_articles(flat)
+    seen = load_state(inp.state_path, ttl_hours=inp.state_ttl_hours, now=inp.now_utc)
+
+    events: list[PushEvent] = []
+    new_entries: list[StateEntry] = []
+    for cluster in clusters:
+        primary = cluster.primary
+        is_push, reason = severity_decision(primary, inp.thresholds)
+        if not is_push:
+            continue
+        eid = compute_event_id(primary.canonical_url, primary.title)
+        if eid in seen:
+            continue
+        sources = cluster.all_sources
+        symbols = tuple(dict.fromkeys(
+            s for art in cluster.all_articles for s in art.symbols
+        ))
+        urls = tuple(dict.fromkeys(
+            art.url for art in cluster.all_articles if art.url
+        ))
+        events.append(PushEvent(
+            event_id=eid,
+            headline=primary.title,
+            summary=primary.summary,
+            sources=sources,
+            symbols_implicated=symbols,
+            impact="high",  # severity gate guarantees push-grade
+            sentiment_score=primary.sentiment_score,
+            relevance_score=primary.relevance_score,
+            urls=urls,
+            published_at_utc=primary.published_at_utc,
+            severity_reason=reason,
+        ))
+        new_entries.append(StateEntry(event_id=eid, first_seen_utc=inp.now_utc))
+
+    if new_entries:
+        write_state(
+            inp.state_path,
+            ttl_hours=inp.state_ttl_hours,
+            now=inp.now_utc,
+            existing=seen,
+            new_entries=new_entries,
+        )
+
+    return NewsMonitorResult(events=events, provider_health=health, flags=flags)
+
+
 __all__ = [
     "SeverityThresholds",
     "severity_decision",
@@ -179,4 +313,8 @@ __all__ = [
     "compute_event_id",
     "load_state",
     "write_state",
+    "PushEvent",
+    "NewsMonitorInput",
+    "NewsMonitorResult",
+    "monitor",
 ]

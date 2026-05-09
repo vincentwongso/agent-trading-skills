@@ -200,3 +200,48 @@ def test_classify_low_for_opinion() -> None:
 def test_classify_case_insensitive() -> None:
     assert classify_impact("fed cuts rates") == "high"
     assert classify_impact("FED CUTS RATES") == "high"
+
+
+def test_classify_impact_substring_war_inside_word_is_low() -> None:
+    """'war' should match as a word, not a substring of 'warning' or 'hardware'."""
+    assert classify_impact("System warning: disk full") == "low"
+    assert classify_impact("Hardware refresh underway") == "low"
+    assert classify_impact("Star Wars merch sales rebound") == "low"
+
+
+def test_classify_impact_war_as_word_is_high() -> None:
+    """'war' as a standalone word still classifies as high-impact."""
+    assert classify_impact("Trump declares trade war on EU") == "high"
+    assert classify_impact("End of war near, says Brussels", "ceasefire talks underway") == "high"
+
+
+def test_classify_impact_fed_substring_is_low() -> None:
+    """'fed' should not match 'informed', 'preferred', etc."""
+    assert classify_impact("Investors informed of dividend cut") == "low"
+    assert classify_impact("Preferred shares outperform common") == "low"
+
+
+def test_classify_impact_fed_as_word_is_high() -> None:
+    """'fed' as a word matches; case-insensitive."""
+    assert classify_impact("Fed pauses cuts") == "high"
+
+
+def test_classify_impact_nfp_substring_does_not_overmatch() -> None:
+    """'nfp' is naturally short — but it should be word-bounded so it doesn't accidentally match within other tokens."""
+    # nfp on its own should still match (it's an acronym)
+    assert classify_impact("NFP smashes consensus") == "high"
+    # but a string like "snfp" or "anfp" inside a hash/identifier should not
+    assert classify_impact("Token id snfp123 expired") == "low"
+
+
+def test_classify_impact_multi_word_keywords_still_match() -> None:
+    """Multi-word keywords like 'rate hike', 'opec+ cut', 'strait of hormuz' must still match."""
+    assert classify_impact("ECB delivers another rate hike") == "high"
+    assert classify_impact("OPEC+ cut announced", "production reduction confirmed") == "high"
+    assert classify_impact("Strait of Hormuz tensions escalate") == "high"
+
+
+def test_classify_impact_punctuation_does_not_break_word_boundary() -> None:
+    """Punctuation around a keyword should not prevent the match."""
+    assert classify_impact("Surprise! Fed pauses cuts.") == "high"
+    assert classify_impact("'War' ends in headline") == "high"

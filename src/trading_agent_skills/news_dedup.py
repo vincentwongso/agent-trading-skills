@@ -241,16 +241,33 @@ _MEDIUM_IMPACT_KEYWORDS = (
 )
 
 
-def classify_impact(title: str, summary: str = "") -> str:
-    """Return ``high`` / ``medium`` / ``low`` based on keyword match.
+# Word-boundary regex: each keyword (which may contain spaces or punctuation
+# like "opec+ cut" or "non-farm payroll") is escaped, joined, and wrapped in
+# \b...\b so 'war' matches 'war' or "'war'" but not 'warning' or 'hardware'.
+# Multi-word keywords work because \b matches between alphanumerics and
+# non-alphanumerics — interior whitespace is naturally bounded.
+_HIGH_IMPACT_REGEX = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _HIGH_IMPACT_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
+_MEDIUM_IMPACT_REGEX = re.compile(
+    r"\b(?:" + "|".join(re.escape(kw) for kw in _MEDIUM_IMPACT_KEYWORDS) + r")\b",
+    re.IGNORECASE,
+)
 
-    Match is case-insensitive on the concatenated ``title + summary``. Any
-    high-impact hit wins; otherwise medium-impact; otherwise low.
+
+def classify_impact(title: str, summary: str = "") -> str:
+    """Return ``high`` / ``medium`` / ``low`` based on word-bounded keyword match.
+
+    Match is case-insensitive on the concatenated ``title + " " + summary``,
+    using regex word boundaries so e.g. ``war`` doesn't match ``warning``
+    and ``fed`` doesn't match ``informed``. Multi-word keywords work because
+    ``\\b`` matches at any alphanumeric/non-alphanumeric transition.
     """
-    text = (title + " " + summary).lower()
-    if any(kw in text for kw in _HIGH_IMPACT_KEYWORDS):
+    text = title + " " + summary
+    if _HIGH_IMPACT_REGEX.search(text):
         return "high"
-    if any(kw in text for kw in _MEDIUM_IMPACT_KEYWORDS):
+    if _MEDIUM_IMPACT_REGEX.search(text):
         return "medium"
     return "low"
 

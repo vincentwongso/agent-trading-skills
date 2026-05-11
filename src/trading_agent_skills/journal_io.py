@@ -628,7 +628,24 @@ def _append_line(path: Path | str, record: dict[str, Any]) -> None:
 
 
 def read_raw(path: Path | str) -> list[dict[str, Any]]:
-    """Stream all JSONL records as dicts, preserving order. Tolerates blanks."""
+    """Stream all journal records as dicts, preserving order.
+
+    Prefers the SQLite backing (sibling trader.db) when it exists, falling
+    back to the JSONL file. JSONL fallback is kept so legacy/test fixtures
+    without an initialised DB still work.
+    """
+    db_path = _sibling_db_path(path)
+    if db_path.exists():
+        try:
+            return _read_raw_sqlite(db_path)
+        except sqlite3.OperationalError:
+            # Tables not initialised yet — fall through to JSONL.
+            pass
+    return _read_raw_jsonl(path)
+
+
+def _read_raw_jsonl(path: Path | str) -> list[dict[str, Any]]:
+    """Existing JSONL-only reader. Kept for fallback + the migration CLI."""
     p = Path(path).expanduser()
     if not p.exists():
         return []
@@ -641,9 +658,7 @@ def read_raw(path: Path | str) -> list[dict[str, Any]]:
             try:
                 rec = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise SchemaError(
-                    f"line {line_no}: invalid JSON — {exc}"
-                ) from exc
+                raise SchemaError(f"line {line_no}: invalid JSON — {exc}") from exc
             if rec.get("schema_version") != SCHEMA_VERSION:
                 raise SchemaError(
                     f"line {line_no}: unsupported schema_version "
@@ -651,6 +666,110 @@ def read_raw(path: Path | str) -> list[dict[str, Any]]:
                 )
             out.append(rec)
     return out
+
+
+# Column order matches the JSONL record shape so dict(zip(...)) round-trips cleanly.
+_OPEN_COLS = [
+    "uuid", "schema_version", "ticket", "symbol", "side", "volume",
+    "entry_price", "exit_price", "entry_time", "exit_time",
+    "original_stop_distance_points", "original_risk_amount",
+    "realized_pnl", "swap_accrued", "commission", "setup_type", "rationale",
+    "risk_classification_at_close", "outcome_notes", "written_at",
+    "sl", "tp", "run_id", "paper_mode",
+]
+
+_UPDATE_COLS = [
+    "uuid", "schema_version", "update_time",
+    "setup_type", "rationale", "risk_classification_at_close", "outcome_notes",
+]
+
+_SL_TRAILED_COLS = [
+    "uuid", "schema_version", "ts",
+    "old_sl", "new_sl", "old_tp", "new_tp", "reason", "paper_mode",
+]
+
+_PARTIAL_CLOSED_COLS = [
+    "uuid", "schema_version", "ts",
+    "closed_lots", "remaining_lots", "realized_pnl", "reason", "paper_mode",
+]
+
+_CLOSED_COLS = [
+    "uuid", "schema_version", "ts",
+    "exit_price", "realized_pnl", "close_kind", "reason", "paper_mode",
+]
+
+
+def _read_raw_sqlite(db_path: Path) -> list[dict[str, Any]]:
+    """Read all rows across all five tables, restoring the JSONL record shapes.
+
+    Order: opens first by entry_time ASC, then all event/update records by
+    their natural ts/update_time ASC. Downstream consumers (read_resolved,
+    read_resolved_with_events) only require updates and events to appear
+    after their parent open — strict chronological ordering isn't needed.
+    """
+    con = sqlite3.connect(db_path)
+    try:
+        out: list[dict[str, Any]] = []
+
+        # journal_open
+        for row in con.execute(
+            f"SELECT {', '.join(_OPEN_COLS)} FROM journal_open ORDER BY entry_time ASC"
+        ):
+            rec = dict(zip(_OPEN_COLS, row))
+            rec["type"] = "open"
+            rec["_written_at"] = rec.pop("written_at")
+            if rec.get("paper_mode") is not None:
+                rec["paper_mode"] = bool(rec["paper_mode"])
+            # Drop NULL optionals so "key in rec" semantics match the JSONL.
+            for k in ("sl", "tp", "run_id", "paper_mode"):
+                if rec.get(k) is None:
+                    rec.pop(k, None)
+            out.append(rec)
+
+        # journal_updates
+        for row in con.execute(
+            f"SELECT {', '.join(_UPDATE_COLS)} FROM journal_updates ORDER BY update_time ASC"
+        ):
+            rec = dict(zip(_UPDATE_COLS, row))
+            rec["type"] = "update"
+            for k in ("setup_type", "rationale",
+                      "risk_classification_at_close", "outcome_notes"):
+                if rec.get(k) is None:
+                    rec.pop(k, None)
+            out.append(rec)
+
+        # journal_sl_trailed — old_tp/new_tp can be NULL but are always present
+        # in the original record (write_sl_trailed sets them explicitly to None).
+        for row in con.execute(
+            f"SELECT {', '.join(_SL_TRAILED_COLS)} FROM journal_sl_trailed ORDER BY ts ASC"
+        ):
+            rec = dict(zip(_SL_TRAILED_COLS, row))
+            rec["type"] = "sl-trailed"
+            rec["paper_mode"] = bool(rec["paper_mode"])
+            out.append(rec)
+
+        # journal_partial_closed
+        for row in con.execute(
+            f"SELECT {', '.join(_PARTIAL_CLOSED_COLS)} FROM journal_partial_closed "
+            f"ORDER BY ts ASC"
+        ):
+            rec = dict(zip(_PARTIAL_CLOSED_COLS, row))
+            rec["type"] = "partial-closed"
+            rec["paper_mode"] = bool(rec["paper_mode"])
+            out.append(rec)
+
+        # journal_closed
+        for row in con.execute(
+            f"SELECT {', '.join(_CLOSED_COLS)} FROM journal_closed ORDER BY ts ASC"
+        ):
+            rec = dict(zip(_CLOSED_COLS, row))
+            rec["type"] = "closed"
+            rec["paper_mode"] = bool(rec["paper_mode"])
+            out.append(rec)
+
+        return out
+    finally:
+        con.close()
 
 
 def read_resolved(path: Path | str) -> list[dict[str, Any]]:

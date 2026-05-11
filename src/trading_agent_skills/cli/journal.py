@@ -280,8 +280,8 @@ def _cmd_migrate_to_sqlite(args: argparse.Namespace) -> int:
     """
     from trading_agent_skills.journal_io import (
         _connect_and_init,
+        _read_raw_jsonl,
         _sibling_db_path,
-        read_raw,
     )
 
     path = Path(args.journal_path).expanduser()
@@ -296,7 +296,7 @@ def _cmd_migrate_to_sqlite(args: argparse.Namespace) -> int:
             "open": 0, "update": 0, "sl-trailed": 0,
             "partial-closed": 0, "closed": 0, "skipped": 0,
         }
-        for rec in read_raw(path):
+        for rec in _read_raw_jsonl(path):
             t = rec.get("type")
             if t == "open":
                 cur = con.execute(

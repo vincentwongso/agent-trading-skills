@@ -259,3 +259,70 @@ def test_write_close_dual_writes_to_sqlite(tmp_path: Path) -> None:
     assert rows == [(uid, "77.90", "248.00", "invalidation",
                      "thesis-broken-h4-lower-low", 0)]
     con.close()
+
+
+def test_read_raw_reads_open_and_update_from_sqlite(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())
+    write_update(p, uuid=uid, rationale="Updated.")
+
+    # Delete the JSONL — SQLite must satisfy the read.
+    p.unlink()
+
+    records = read_raw(p)
+    assert len(records) == 2
+    open_rec = next(r for r in records if r["type"] == "open")
+    upd_rec = next(r for r in records if r["type"] == "update")
+    assert open_rec["uuid"] == uid
+    assert upd_rec["uuid"] == uid
+    assert upd_rec["rationale"] == "Updated."
+
+
+def test_read_raw_reads_stage3_events_from_sqlite(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())
+    write_sl_trailed(
+        p, uuid=uid, old_sl="74.50", new_sl="75.20",
+        reason="breakeven", paper_mode=False,
+    )
+    write_partial_closed(
+        p, uuid=uid, closed_lots="0.50", remaining_lots="0.50",
+        realized_pnl="120.00", reason="tp1", paper_mode=False,
+    )
+    write_close(
+        p, uuid=uid, exit_price="77.90", realized_pnl="248.00",
+        close_kind="manual", reason="session-end", paper_mode=False,
+    )
+
+    p.unlink()  # force SQLite path
+
+    records = read_raw(p)
+    types = sorted(r["type"] for r in records)
+    assert types == ["closed", "open", "partial-closed", "sl-trailed"]
+
+    # Cross-check read_resolved_with_events attaches the three events.
+    resolved = read_resolved_with_events(p)
+    assert len(resolved) == 1
+    events = resolved[0]["_events"]
+    assert sorted(e["type"] for e in events) == ["closed", "partial-closed", "sl-trailed"]
+
+
+def test_read_raw_falls_back_to_jsonl_when_db_missing(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    rec = {
+        "schema_version": 1, "uuid": "u-legacy", "type": "open", "ticket": None,
+        "symbol": "EURUSD", "side": "buy", "volume": "1.0",
+        "entry_price": "1.0800", "exit_price": "1.0850",
+        "entry_time": "2026-04-29T07:30:00+00:00",
+        "exit_time": "2026-04-29T14:15:00+00:00",
+        "original_stop_distance_points": 30, "original_risk_amount": "50.00",
+        "realized_pnl": "50.00", "swap_accrued": "0", "commission": "-1.00",
+        "setup_type": "test", "rationale": "test",
+        "risk_classification_at_close": "RISK_FREE",
+        "outcome_notes": None, "_written_at": "2026-04-29T14:16:00+00:00",
+    }
+    p.write_text(json.dumps(rec) + "\n")
+
+    records = read_raw(p)
+    assert len(records) == 1
+    assert records[0]["uuid"] == "u-legacy"

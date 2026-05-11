@@ -224,6 +224,32 @@ def _connect_and_init(db_path: Path) -> sqlite3.Connection:
     return con
 
 
+def _sqlite_write_update(path: Path | str, record: dict[str, Any]) -> None:
+    """Insert the update patch row into journal_updates. INSERT OR IGNORE
+    on (uuid, update_time) so retries don't duplicate.
+    """
+    db_path = _sibling_db_path(path)
+    con = _connect_and_init(db_path)
+    try:
+        con.execute(
+            """
+            INSERT OR IGNORE INTO journal_updates (
+                uuid, schema_version, update_time,
+                setup_type, rationale, risk_classification_at_close, outcome_notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["uuid"], record["schema_version"], record["update_time"],
+                record.get("setup_type"), record.get("rationale"),
+                record.get("risk_classification_at_close"),
+                record.get("outcome_notes"),
+            ),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 def _sqlite_write_open(path: Path | str, record: dict[str, Any]) -> None:
     """Insert (or replace) the row into journal_open in the sibling trader.db.
 
@@ -410,6 +436,7 @@ def write_update(
         **patches,
     }
     _append_line(path, record)
+    _sqlite_write_update(path, record)
 
 
 def write_sl_trailed(

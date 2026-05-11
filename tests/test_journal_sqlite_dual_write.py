@@ -142,3 +142,32 @@ def test_write_open_duplicate_uuid_replaces(tmp_path: Path) -> None:
     (n,) = con.execute("SELECT COUNT(*) FROM journal_open").fetchone()
     assert n == 1
     con.close()
+
+
+def test_write_update_dual_writes_to_sqlite(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())
+    write_update(p, uuid=uid, rationale="Reflection: held too long.")
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    rows = con.execute(
+        "SELECT uuid, setup_type, rationale, risk_classification_at_close, outcome_notes "
+        "FROM journal_updates WHERE uuid=?",
+        (uid,),
+    ).fetchall()
+    assert rows == [(uid, None, "Reflection: held too long.", None, None)]
+    con.close()
+
+
+def test_write_update_orphan_uuid_still_inserts(tmp_path: Path) -> None:
+    """Storage layer accepts orphans; reconciliation drops them in read_resolved."""
+    p = tmp_path / "journal.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    write_update(p, uuid="orphan-uuid", rationale="dangling")
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    (n,) = con.execute(
+        "SELECT COUNT(*) FROM journal_updates WHERE uuid='orphan-uuid'"
+    ).fetchone()
+    assert n == 1
+    con.close()

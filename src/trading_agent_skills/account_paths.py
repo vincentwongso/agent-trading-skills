@@ -28,6 +28,7 @@ class AccountPaths:
     decisions: Path
     proposals: Path
     daily_state: Path
+    db: Path
 
     def ensure_dirs(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -49,4 +50,5 @@ def resolve_account_paths(*, account_id: str, base: Optional[Path] = None) -> Ac
         decisions=root / "decisions.jsonl",
         proposals=root / "proposals",
         daily_state=root / "daily_state.json",
+        db=root / "trader.db",
     )

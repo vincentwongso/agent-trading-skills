@@ -14,6 +14,7 @@ def test_resolve_paths_returns_namespaced_dirs(tmp_path: Path) -> None:
     assert paths.decisions == paths.root / "decisions.jsonl"
     assert paths.proposals == paths.root / "proposals"
     assert paths.daily_state == paths.root / "daily_state.json"
+    assert paths.db == paths.root / "trader.db"
 
 
 def test_resolve_paths_rejects_blank_account_id(tmp_path: Path) -> None:
@@ -32,6 +33,11 @@ def test_ensure_dirs_creates_root_versions_proposals(tmp_path: Path) -> None:
     assert paths.root.is_dir()
     assert paths.charter_versions.is_dir()
     assert paths.proposals.is_dir()
+
+
+def test_resolve_account_paths_includes_db(tmp_path: Path) -> None:
+    paths = resolve_account_paths(account_id="12345678", base=tmp_path)
+    assert paths.db == tmp_path / "accounts" / "12345678" / "trader.db"
 
 
 def test_default_base_is_trading_agent_skills_home(monkeypatch, tmp_path: Path) -> None:

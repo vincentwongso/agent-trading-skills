@@ -120,12 +120,20 @@ def write_open(
     ticket: Optional[int] = None,
     outcome_notes: Optional[str] = None,
     uuid: Optional[str] = None,
+    sl: Optional[Decimal | str] = None,
+    tp: Optional[Decimal | str] = None,
+    run_id: Optional[str] = None,
+    paper_mode: Optional[bool] = None,
 ) -> str:
     """Append a new ``open`` entry. Returns the generated (or supplied) uuid.
 
     Validation is strict at the write boundary — the journal is the source
     of truth for performance stats, and silently accepting bad data here
     poisons every retrospective query downstream.
+
+    ``sl``, ``tp``, ``run_id``, ``paper_mode`` are optional structured fields
+    used by Stage 3 position management. When omitted, downstream readers
+    fall back to regex-extracting them from ``outcome_notes`` (legacy path).
     """
     if side not in ALLOWED_SIDES:
         raise SchemaError(f"side must be one of {ALLOWED_SIDES}, got {side!r}")
@@ -169,6 +177,18 @@ def write_open(
         "outcome_notes": outcome_notes,
         "_written_at": _now_iso(),
     }
+    if sl is not None:
+        record["sl"] = _decimal_str(sl, "sl")
+    if tp is not None:
+        record["tp"] = _decimal_str(tp, "tp")
+    if run_id is not None:
+        if not isinstance(run_id, str) or not run_id.strip():
+            raise SchemaError("run_id must be a non-empty string")
+        record["run_id"] = run_id.strip()
+    if paper_mode is not None:
+        if not isinstance(paper_mode, bool):
+            raise SchemaError("paper_mode must be a bool")
+        record["paper_mode"] = paper_mode
     _append_line(path, record)
     return record_uuid
 

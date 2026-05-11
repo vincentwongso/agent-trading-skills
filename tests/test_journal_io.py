@@ -148,6 +148,44 @@ def test_write_open_normalises_non_utc_aware_to_utc(tmp_path: Path):
     assert raw[0]["entry_time"] == "2026-04-29T07:30:00+00:00"
 
 
+def test_write_open_persists_structured_sl_tp_run_id_paper_mode(tmp_path: Path):
+    journal = tmp_path / "j.jsonl"
+    write_open(
+        journal,
+        **_open_kwargs(
+            sl="74.50", tp="78.10", run_id="abc123", paper_mode=False,
+        ),
+    )
+    raw = read_raw(journal)
+    assert raw[0]["sl"] == "74.50"
+    assert raw[0]["tp"] == "78.10"
+    assert raw[0]["run_id"] == "abc123"
+    assert raw[0]["paper_mode"] is False
+
+
+def test_write_open_omits_structured_fields_when_unset(tmp_path: Path):
+    journal = tmp_path / "j.jsonl"
+    write_open(journal, **_open_kwargs())
+    raw = read_raw(journal)
+    for field in ("sl", "tp", "run_id", "paper_mode"):
+        assert field not in raw[0]
+
+
+def test_write_open_rejects_float_sl(tmp_path: Path):
+    with pytest.raises(SchemaError, match="sl"):
+        write_open(tmp_path / "j.jsonl", **_open_kwargs(sl=74.5))
+
+
+def test_write_open_rejects_empty_run_id(tmp_path: Path):
+    with pytest.raises(SchemaError, match="run_id"):
+        write_open(tmp_path / "j.jsonl", **_open_kwargs(run_id="   "))
+
+
+def test_write_open_rejects_non_bool_paper_mode(tmp_path: Path):
+    with pytest.raises(SchemaError, match="paper_mode"):
+        write_open(tmp_path / "j.jsonl", **_open_kwargs(paper_mode="false"))
+
+
 # --- write_update ---------------------------------------------------------
 
 

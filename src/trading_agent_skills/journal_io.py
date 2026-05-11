@@ -224,6 +224,53 @@ def _connect_and_init(db_path: Path) -> sqlite3.Connection:
     return con
 
 
+def _sqlite_write_open(path: Path | str, record: dict[str, Any]) -> None:
+    """Insert (or replace) the row into journal_open in the sibling trader.db.
+
+    Uses INSERT OR REPLACE keyed on uuid so callers re-writing the same uuid
+    don't crash. JSONL still appends — that's the existing contract.
+    """
+    db_path = _sibling_db_path(path)
+    con = _connect_and_init(db_path)
+    try:
+        con.execute(
+            """
+            INSERT OR REPLACE INTO journal_open (
+                uuid, schema_version, ticket, symbol, side, volume,
+                entry_price, exit_price, entry_time, exit_time,
+                original_stop_distance_points, original_risk_amount,
+                realized_pnl, swap_accrued, commission, setup_type, rationale,
+                risk_classification_at_close, outcome_notes, written_at,
+                sl, tp, run_id, paper_mode
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?
+            )
+            """,
+            (
+                record["uuid"], record["schema_version"], record.get("ticket"),
+                record["symbol"], record["side"], record["volume"],
+                record["entry_price"], record["exit_price"],
+                record["entry_time"], record["exit_time"],
+                record["original_stop_distance_points"],
+                record["original_risk_amount"],
+                record["realized_pnl"], record["swap_accrued"],
+                record["commission"], record["setup_type"], record["rationale"],
+                record["risk_classification_at_close"],
+                record.get("outcome_notes"), record["_written_at"],
+                record.get("sl"), record.get("tp"), record.get("run_id"),
+                int(record["paper_mode"]) if record.get("paper_mode") is not None else None,
+            ),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 # --- write -----------------------------------------------------------------
 
 
@@ -318,6 +365,7 @@ def write_open(
             raise SchemaError("paper_mode must be a bool")
         record["paper_mode"] = paper_mode
     _append_line(path, record)
+    _sqlite_write_open(path, record)
     return record_uuid
 
 

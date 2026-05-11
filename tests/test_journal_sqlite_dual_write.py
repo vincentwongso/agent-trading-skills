@@ -72,3 +72,73 @@ def test_init_journal_tables_creates_all_five_tables(tmp_path: Path) -> None:
         "journal_closed",
     }.issubset(names)
     con.close()
+
+
+def test_write_open_dual_writes_to_sqlite(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())
+
+    # JSONL still has the record.
+    raw_lines = p.read_text().strip().splitlines()
+    assert len(raw_lines) == 1
+    rec = json.loads(raw_lines[0])
+    assert rec["uuid"] == uid
+
+    # SQLite has the record.
+    db = _sibling_db_path(p)
+    assert db.exists()
+    con = sqlite3.connect(db)
+    rows = con.execute(
+        "SELECT uuid, symbol, side, volume, ticket FROM journal_open"
+    ).fetchall()
+    assert rows == [(uid, "UKOIL", "buy", "1.0", 12345)]
+    con.close()
+
+
+def test_write_open_persists_optional_stage2_fields(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(
+        p,
+        **_open_kwargs(),
+        sl="74.50",
+        tp="78.10",
+        run_id="abc123",
+        paper_mode=True,
+    )
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    row = con.execute(
+        "SELECT sl, tp, run_id, paper_mode FROM journal_open WHERE uuid=?",
+        (uid,),
+    ).fetchone()
+    # _decimal_str preserves the trailing zero because "74.50" is a string.
+    assert row == ("74.50", "78.10", "abc123", 1)
+    con.close()
+
+
+def test_write_open_omits_optional_fields_as_null(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())  # no sl/tp/run_id/paper_mode
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    row = con.execute(
+        "SELECT sl, tp, run_id, paper_mode FROM journal_open WHERE uuid=?",
+        (uid,),
+    ).fetchone()
+    assert row == (None, None, None, None)
+    con.close()
+
+
+def test_write_open_duplicate_uuid_replaces(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    fixed = "fixed-uuid-1"
+    write_open(p, **_open_kwargs(), uuid=fixed)
+    # Second call with same uuid: JSONL appends (intentional, that's the existing
+    # contract — see existing test_write_open_returns_uuid_and_appends), SQLite
+    # uses INSERT OR REPLACE so it doesn't raise.
+    write_open(p, **_open_kwargs(), uuid=fixed)
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    (n,) = con.execute("SELECT COUNT(*) FROM journal_open").fetchone()
+    assert n == 1
+    con.close()

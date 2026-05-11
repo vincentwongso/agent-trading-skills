@@ -478,3 +478,41 @@ def test_migrate_to_sqlite_is_idempotent(tmp_path) -> None:
     assert n_open == 1
     assert n_trail == 1
     con.close()
+
+
+def test_export_jsonl_round_trips_all_record_types(tmp_path) -> None:
+    from trading_agent_skills.journal_io import (
+        write_open, write_update, write_sl_trailed,
+        write_partial_closed, write_close, read_raw,
+    )
+    from trading_agent_skills.cli.journal import main as journal_cli
+
+    src = tmp_path / "journal.jsonl"
+    uid = write_open(src, **_open_kwargs())
+    write_update(src, uuid=uid, rationale="Reflected later.")
+    write_sl_trailed(
+        src, uuid=uid, old_sl="74.50", new_sl="75.20",
+        reason="breakeven", paper_mode=False,
+    )
+    write_partial_closed(
+        src, uuid=uid, closed_lots="0.50", remaining_lots="0.50",
+        realized_pnl="120.00", reason="tp1", paper_mode=False,
+    )
+    write_close(
+        src, uuid=uid, exit_price="77.90", realized_pnl="248.00",
+        close_kind="manual", reason="session-end", paper_mode=False,
+    )
+
+    out = tmp_path / "exported.jsonl"
+    rc = journal_cli([
+        "export-jsonl",
+        "--journal-path", str(src),
+        "--out", str(out),
+    ])
+    assert rc == 0
+
+    exported = read_raw(out)
+    assert len(exported) == 5
+    assert sorted(r["type"] for r in exported) == [
+        "closed", "open", "partial-closed", "sl-trailed", "update",
+    ]

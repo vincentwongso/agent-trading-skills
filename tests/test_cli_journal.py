@@ -357,3 +357,124 @@ def test_cli_decision_read_since(tmp_path: Path) -> None:
     assert res.returncode == 0
     out = json.loads(res.stdout)
     assert {r["symbol"] for r in out["records"]} == {"NEW"}
+
+
+# --- migrate-to-sqlite ---------------------------------------------------
+
+
+def _open_kwargs(**overrides) -> dict:
+    """Canonical open-record kwargs used across migrate tests."""
+    base = dict(
+        symbol="UKOIL",
+        side="buy",
+        volume="1.0",
+        entry_price="75.42",
+        exit_price="78.10",
+        entry_time="2026-04-29T07:30:00+00:00",
+        exit_time="2026-05-02T15:45:00+00:00",
+        original_stop_distance_points=80,
+        original_risk_amount="80.00",
+        realized_pnl="268.00",
+        swap_accrued="375.00",
+        commission="-7.50",
+        setup_type="swap-harvest-long",
+        rationale="Geopolitical tension intact; oversold on D1; positive carry.",
+        risk_classification_at_close="LOCKED_PROFIT",
+        ticket=12345,
+    )
+    base.update(overrides)
+    return base
+
+
+def test_migrate_to_sqlite_imports_all_record_types(tmp_path) -> None:
+    """Hand-roll a JSONL with one of each type and verify all five tables fill."""
+    import json
+    import sqlite3
+    from trading_agent_skills.journal_io import _sibling_db_path
+    from trading_agent_skills.cli.journal import main as journal_cli
+
+    p = tmp_path / "journal.jsonl"
+    records = [
+        {
+            "schema_version": 1, "uuid": "u1", "type": "open", "ticket": None,
+            "symbol": "EURUSD", "side": "buy", "volume": "1.0",
+            "entry_price": "1.0800", "exit_price": "1.0850",
+            "entry_time": "2026-04-29T07:30:00+00:00",
+            "exit_time": "2026-04-29T14:15:00+00:00",
+            "original_stop_distance_points": 30, "original_risk_amount": "50.00",
+            "realized_pnl": "50.00", "swap_accrued": "0", "commission": "-1.00",
+            "setup_type": "test", "rationale": "test",
+            "risk_classification_at_close": "RISK_FREE",
+            "outcome_notes": None, "_written_at": "2026-04-29T14:16:00+00:00",
+        },
+        {
+            "schema_version": 1, "uuid": "u1", "type": "update",
+            "update_time": "2026-04-30T10:00:00+00:00",
+            "rationale": "next-day reflection",
+        },
+        {
+            "schema_version": 1, "uuid": "u1", "type": "sl-trailed",
+            "ts": "2026-04-29T09:00:00+00:00",
+            "old_sl": "1.0780", "new_sl": "1.0805",
+            "old_tp": "1.0850", "new_tp": "1.0850",
+            "reason": "breakeven", "paper_mode": False,
+        },
+        {
+            "schema_version": 1, "uuid": "u1", "type": "partial-closed",
+            "ts": "2026-04-29T11:00:00+00:00",
+            "closed_lots": "0.50", "remaining_lots": "0.50",
+            "realized_pnl": "25.00", "reason": "tp1", "paper_mode": False,
+        },
+        {
+            "schema_version": 1, "uuid": "u1", "type": "closed",
+            "ts": "2026-04-29T14:15:00+00:00",
+            "exit_price": "1.0850", "realized_pnl": "50.00",
+            "close_kind": "manual", "reason": "session-end", "paper_mode": False,
+        },
+    ]
+    p.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+
+    rc = journal_cli(["migrate-to-sqlite", "--journal-path", str(p)])
+    assert rc == 0
+
+    db = _sibling_db_path(p)
+    con = sqlite3.connect(db)
+    counts = {
+        t: con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        for t in ("journal_open", "journal_updates", "journal_sl_trailed",
+                  "journal_partial_closed", "journal_closed")
+    }
+    assert counts == {
+        "journal_open": 1,
+        "journal_updates": 1,
+        "journal_sl_trailed": 1,
+        "journal_partial_closed": 1,
+        "journal_closed": 1,
+    }
+    con.close()
+
+
+def test_migrate_to_sqlite_is_idempotent(tmp_path) -> None:
+    import sqlite3
+    from trading_agent_skills.journal_io import (
+        _sibling_db_path, write_open, write_sl_trailed,
+    )
+    from trading_agent_skills.cli.journal import main as journal_cli
+
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())  # dual-writes already
+    write_sl_trailed(
+        p, uuid=uid, old_sl="74.50", new_sl="75.20",
+        reason="breakeven", paper_mode=False,
+    )
+
+    # Re-migrate twice: no-op (uuid already in DB, UNIQUE constraint dedupes events).
+    journal_cli(["migrate-to-sqlite", "--journal-path", str(p)])
+    journal_cli(["migrate-to-sqlite", "--journal-path", str(p)])
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    (n_open,) = con.execute("SELECT COUNT(*) FROM journal_open WHERE uuid=?", (uid,)).fetchone()
+    (n_trail,) = con.execute("SELECT COUNT(*) FROM journal_sl_trailed WHERE uuid=?", (uid,)).fetchone()
+    assert n_open == 1
+    assert n_trail == 1
+    con.close()

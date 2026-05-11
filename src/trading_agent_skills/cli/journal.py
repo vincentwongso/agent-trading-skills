@@ -269,6 +269,148 @@ def cmd_decision_read(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- migrate subcommand ---------------------------------------------------
+
+
+def _cmd_migrate_to_sqlite(args: argparse.Namespace) -> int:
+    """Read journal.jsonl and idempotently backfill into trader.db.
+
+    Idempotent via uuid PK + UNIQUE(uuid, ts/update_time) + INSERT OR IGNORE.
+    Returns counts per type plus skipped duplicates.
+    """
+    from trading_agent_skills.journal_io import (
+        _connect_and_init,
+        _sibling_db_path,
+        read_raw,
+    )
+
+    path = Path(args.journal_path).expanduser()
+    if not path.exists():
+        print(f"journal not found: {path}", file=sys.stderr)
+        return 1
+
+    db_path = _sibling_db_path(path)
+    con = _connect_and_init(db_path)
+    try:
+        counts = {
+            "open": 0, "update": 0, "sl-trailed": 0,
+            "partial-closed": 0, "closed": 0, "skipped": 0,
+        }
+        for rec in read_raw(path):
+            t = rec.get("type")
+            if t == "open":
+                cur = con.execute(
+                    """
+                    INSERT OR IGNORE INTO journal_open (
+                        uuid, schema_version, ticket, symbol, side, volume,
+                        entry_price, exit_price, entry_time, exit_time,
+                        original_stop_distance_points, original_risk_amount,
+                        realized_pnl, swap_accrued, commission, setup_type, rationale,
+                        risk_classification_at_close, outcome_notes, written_at,
+                        sl, tp, run_id, paper_mode
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?,
+                        ?, ?, ?, ?, ?,
+                        ?, ?, ?,
+                        ?, ?, ?, ?
+                    )
+                    """,
+                    (
+                        rec["uuid"], rec["schema_version"], rec.get("ticket"),
+                        rec["symbol"], rec["side"], rec["volume"],
+                        rec["entry_price"], rec["exit_price"],
+                        rec["entry_time"], rec["exit_time"],
+                        rec["original_stop_distance_points"],
+                        rec["original_risk_amount"],
+                        rec["realized_pnl"], rec["swap_accrued"],
+                        rec["commission"], rec["setup_type"], rec["rationale"],
+                        rec["risk_classification_at_close"],
+                        rec.get("outcome_notes"), rec.get("_written_at", ""),
+                        rec.get("sl"), rec.get("tp"), rec.get("run_id"),
+                        int(rec["paper_mode"]) if rec.get("paper_mode") is not None else None,
+                    ),
+                )
+                counts["open" if cur.rowcount else "skipped"] += 1
+            elif t == "update":
+                cur = con.execute(
+                    """
+                    INSERT OR IGNORE INTO journal_updates (
+                        uuid, schema_version, update_time,
+                        setup_type, rationale, risk_classification_at_close, outcome_notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rec["uuid"], rec["schema_version"], rec.get("update_time", ""),
+                        rec.get("setup_type"), rec.get("rationale"),
+                        rec.get("risk_classification_at_close"),
+                        rec.get("outcome_notes"),
+                    ),
+                )
+                counts["update" if cur.rowcount else "skipped"] += 1
+            elif t == "sl-trailed":
+                cur = con.execute(
+                    """
+                    INSERT OR IGNORE INTO journal_sl_trailed (
+                        uuid, schema_version, ts,
+                        old_sl, new_sl, old_tp, new_tp, reason, paper_mode
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rec["uuid"], rec["schema_version"], rec["ts"],
+                        rec["old_sl"], rec["new_sl"],
+                        rec.get("old_tp"), rec.get("new_tp"),
+                        rec["reason"], int(rec.get("paper_mode", False)),
+                    ),
+                )
+                counts["sl-trailed" if cur.rowcount else "skipped"] += 1
+            elif t == "partial-closed":
+                cur = con.execute(
+                    """
+                    INSERT OR IGNORE INTO journal_partial_closed (
+                        uuid, schema_version, ts,
+                        closed_lots, remaining_lots, realized_pnl, reason, paper_mode
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rec["uuid"], rec["schema_version"], rec["ts"],
+                        rec["closed_lots"], rec["remaining_lots"],
+                        rec["realized_pnl"], rec["reason"],
+                        int(rec.get("paper_mode", False)),
+                    ),
+                )
+                counts["partial-closed" if cur.rowcount else "skipped"] += 1
+            elif t == "closed":
+                cur = con.execute(
+                    """
+                    INSERT OR IGNORE INTO journal_closed (
+                        uuid, schema_version, ts,
+                        exit_price, realized_pnl, close_kind, reason, paper_mode
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rec["uuid"], rec["schema_version"], rec["ts"],
+                        rec["exit_price"], rec["realized_pnl"],
+                        rec["close_kind"], rec["reason"],
+                        int(rec.get("paper_mode", False)),
+                    ),
+                )
+                counts["closed" if cur.rowcount else "skipped"] += 1
+            else:
+                counts["skipped"] += 1
+        con.commit()
+    finally:
+        con.close()
+
+    print(json.dumps({
+        "imported": {k: v for k, v in counts.items() if k != "skipped"},
+        "skipped_duplicates": counts["skipped"],
+        "db": str(db_path),
+    }))
+    return 0
+
+
 # --- entry point ----------------------------------------------------------
 
 
@@ -316,6 +458,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_tags = sub.add_parser("tags", help="List existing setup_type tags by frequency")
     p_tags.set_defaults(func=cmd_tags)
+
+    sp_migrate = sub.add_parser("migrate-to-sqlite", help="Backfill journal.jsonl into trader.db")
+    sp_migrate.add_argument("--journal-path", required=True)
+    sp_migrate.set_defaults(func=_cmd_migrate_to_sqlite)
 
     # decision log: nested subcommand `decision {write,write-outcome}`.
     # Uses --decisions-path (separate from --journal-path) because the

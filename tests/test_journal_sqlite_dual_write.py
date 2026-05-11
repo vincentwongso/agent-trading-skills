@@ -171,3 +171,91 @@ def test_write_update_orphan_uuid_still_inserts(tmp_path: Path) -> None:
     ).fetchone()
     assert n == 1
     con.close()
+
+
+def test_write_sl_trailed_dual_writes_to_sqlite(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())
+    write_sl_trailed(
+        p,
+        uuid=uid,
+        old_sl="74.50",
+        new_sl="75.20",
+        reason="moved-to-breakeven-plus",
+        old_tp="78.10",
+        new_tp="78.10",
+        paper_mode=False,
+    )
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    rows = con.execute(
+        "SELECT uuid, old_sl, new_sl, old_tp, new_tp, reason, paper_mode "
+        "FROM journal_sl_trailed WHERE uuid=?",
+        (uid,),
+    ).fetchall()
+    assert rows == [(uid, "74.50", "75.20", "78.10", "78.10",
+                     "moved-to-breakeven-plus", 0)]
+    con.close()
+
+
+def test_write_sl_trailed_optional_tp_columns_nullable(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())
+    write_sl_trailed(
+        p, uuid=uid, old_sl="74.50", new_sl="75.20",
+        reason="breakeven", paper_mode=False,
+    )
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    row = con.execute(
+        "SELECT old_tp, new_tp FROM journal_sl_trailed WHERE uuid=?", (uid,)
+    ).fetchone()
+    assert row == (None, None)
+    con.close()
+
+
+def test_write_partial_closed_dual_writes_to_sqlite(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())
+    write_partial_closed(
+        p,
+        uuid=uid,
+        closed_lots="0.50",
+        remaining_lots="0.50",
+        realized_pnl="120.00",
+        reason="tp1-hit",
+        paper_mode=True,
+    )
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    rows = con.execute(
+        "SELECT uuid, closed_lots, remaining_lots, realized_pnl, reason, paper_mode "
+        "FROM journal_partial_closed WHERE uuid=?",
+        (uid,),
+    ).fetchall()
+    assert rows == [(uid, "0.50", "0.50", "120.00", "tp1-hit", 1)]
+    con.close()
+
+
+def test_write_close_dual_writes_to_sqlite(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    uid = write_open(p, **_open_kwargs())
+    write_close(
+        p,
+        uuid=uid,
+        exit_price="77.90",
+        realized_pnl="248.00",
+        close_kind="invalidation",
+        reason="thesis-broken-h4-lower-low",
+        paper_mode=False,
+    )
+
+    con = sqlite3.connect(_sibling_db_path(p))
+    rows = con.execute(
+        "SELECT uuid, exit_price, realized_pnl, close_kind, reason, paper_mode "
+        "FROM journal_closed WHERE uuid=?",
+        (uid,),
+    ).fetchall()
+    assert rows == [(uid, "77.90", "248.00", "invalidation",
+                     "thesis-broken-h4-lower-low", 0)]
+    con.close()

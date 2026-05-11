@@ -250,6 +250,78 @@ def _sqlite_write_update(path: Path | str, record: dict[str, Any]) -> None:
         con.close()
 
 
+def _sqlite_write_sl_trailed(path: Path | str, record: dict[str, Any]) -> None:
+    db_path = _sibling_db_path(path)
+    con = _connect_and_init(db_path)
+    try:
+        con.execute(
+            """
+            INSERT OR IGNORE INTO journal_sl_trailed (
+                uuid, schema_version, ts,
+                old_sl, new_sl, old_tp, new_tp,
+                reason, paper_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["uuid"], record["schema_version"], record["ts"],
+                record["old_sl"], record["new_sl"],
+                record.get("old_tp"), record.get("new_tp"),
+                record["reason"], int(record["paper_mode"]),
+            ),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _sqlite_write_partial_closed(path: Path | str, record: dict[str, Any]) -> None:
+    db_path = _sibling_db_path(path)
+    con = _connect_and_init(db_path)
+    try:
+        con.execute(
+            """
+            INSERT OR IGNORE INTO journal_partial_closed (
+                uuid, schema_version, ts,
+                closed_lots, remaining_lots, realized_pnl,
+                reason, paper_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["uuid"], record["schema_version"], record["ts"],
+                record["closed_lots"], record["remaining_lots"],
+                record["realized_pnl"],
+                record["reason"], int(record["paper_mode"]),
+            ),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _sqlite_write_close(path: Path | str, record: dict[str, Any]) -> None:
+    db_path = _sibling_db_path(path)
+    con = _connect_and_init(db_path)
+    try:
+        con.execute(
+            """
+            INSERT OR IGNORE INTO journal_closed (
+                uuid, schema_version, ts,
+                exit_price, realized_pnl, close_kind,
+                reason, paper_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record["uuid"], record["schema_version"], record["ts"],
+                record["exit_price"], record["realized_pnl"],
+                record["close_kind"], record["reason"],
+                int(record["paper_mode"]),
+            ),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 def _sqlite_write_open(path: Path | str, record: dict[str, Any]) -> None:
     """Insert (or replace) the row into journal_open in the sibling trader.db.
 
@@ -472,6 +544,7 @@ def write_sl_trailed(
         "paper_mode": bool(paper_mode),
     }
     _append_line(path, record)
+    _sqlite_write_sl_trailed(path, record)
 
 
 def write_partial_closed(
@@ -499,6 +572,7 @@ def write_partial_closed(
         "paper_mode": bool(paper_mode),
     }
     _append_line(path, record)
+    _sqlite_write_partial_closed(path, record)
 
 
 def write_close(
@@ -534,6 +608,7 @@ def write_close(
         "paper_mode": bool(paper_mode),
     }
     _append_line(path, record)
+    _sqlite_write_close(path, record)
 
 
 def _append_line(path: Path | str, record: dict[str, Any]) -> None:

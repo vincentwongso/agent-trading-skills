@@ -1,6 +1,6 @@
 [project]
 name = "trading-agent-skills"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reasoning-layer Claude Code skills for day trading on top of mt5-mcp."
 authors = [{ name = "Vincent" }]
 requires-python = ">=3.11"

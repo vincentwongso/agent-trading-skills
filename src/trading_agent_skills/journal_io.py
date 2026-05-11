@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import uuid as uuid_mod
 from collections import Counter
 from datetime import datetime, timezone
@@ -94,6 +95,133 @@ def _new_uuid() -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# --- SQLite schema / helpers -----------------------------------------------
+
+
+def _sibling_db_path(jsonl_path: Path | str) -> Path:
+    """Resolve the SQLite DB that sits next to a journal.jsonl path.
+
+    Convention: trader.db lives in the same dir as journal.jsonl. This keeps
+    per-account state co-located under ~/.trading-agent-skills/accounts/<id>/.
+    """
+    return Path(jsonl_path).expanduser().parent / "trader.db"
+
+
+_JOURNAL_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS journal_open (
+    uuid TEXT PRIMARY KEY,
+    schema_version INTEGER NOT NULL,
+    ticket INTEGER,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL,
+    volume TEXT NOT NULL,
+    entry_price TEXT NOT NULL,
+    exit_price TEXT NOT NULL,
+    entry_time TEXT NOT NULL,
+    exit_time TEXT NOT NULL,
+    original_stop_distance_points INTEGER NOT NULL,
+    original_risk_amount TEXT NOT NULL,
+    realized_pnl TEXT NOT NULL,
+    swap_accrued TEXT NOT NULL,
+    commission TEXT NOT NULL,
+    setup_type TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    risk_classification_at_close TEXT NOT NULL,
+    outcome_notes TEXT,
+    written_at TEXT NOT NULL,
+    sl TEXT,
+    tp TEXT,
+    run_id TEXT,
+    paper_mode INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_journal_open_entry_time ON journal_open(entry_time);
+CREATE INDEX IF NOT EXISTS idx_journal_open_symbol ON journal_open(symbol);
+CREATE INDEX IF NOT EXISTS idx_journal_open_setup_type ON journal_open(setup_type);
+
+CREATE TABLE IF NOT EXISTS journal_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    update_time TEXT NOT NULL,
+    setup_type TEXT,
+    rationale TEXT,
+    risk_classification_at_close TEXT,
+    outcome_notes TEXT,
+    UNIQUE(uuid, update_time),
+    FOREIGN KEY (uuid) REFERENCES journal_open(uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_journal_updates_uuid ON journal_updates(uuid);
+CREATE INDEX IF NOT EXISTS idx_journal_updates_time ON journal_updates(update_time);
+
+CREATE TABLE IF NOT EXISTS journal_sl_trailed (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    old_sl TEXT NOT NULL,
+    new_sl TEXT NOT NULL,
+    old_tp TEXT,
+    new_tp TEXT,
+    reason TEXT NOT NULL,
+    paper_mode INTEGER NOT NULL,
+    UNIQUE(uuid, ts),
+    FOREIGN KEY (uuid) REFERENCES journal_open(uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_journal_sl_trailed_uuid ON journal_sl_trailed(uuid);
+CREATE INDEX IF NOT EXISTS idx_journal_sl_trailed_ts ON journal_sl_trailed(ts);
+
+CREATE TABLE IF NOT EXISTS journal_partial_closed (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    closed_lots TEXT NOT NULL,
+    remaining_lots TEXT NOT NULL,
+    realized_pnl TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    paper_mode INTEGER NOT NULL,
+    UNIQUE(uuid, ts),
+    FOREIGN KEY (uuid) REFERENCES journal_open(uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_journal_partial_closed_uuid ON journal_partial_closed(uuid);
+CREATE INDEX IF NOT EXISTS idx_journal_partial_closed_ts ON journal_partial_closed(ts);
+
+CREATE TABLE IF NOT EXISTS journal_closed (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uuid TEXT NOT NULL,
+    schema_version INTEGER NOT NULL,
+    ts TEXT NOT NULL,
+    exit_price TEXT NOT NULL,
+    realized_pnl TEXT NOT NULL,
+    close_kind TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    paper_mode INTEGER NOT NULL,
+    UNIQUE(uuid, ts),
+    FOREIGN KEY (uuid) REFERENCES journal_open(uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_journal_closed_uuid ON journal_closed(uuid);
+CREATE INDEX IF NOT EXISTS idx_journal_closed_ts ON journal_closed(ts);
+"""
+
+
+def _init_journal_tables(con: sqlite3.Connection) -> None:
+    """Create all journal tables if missing. Idempotent."""
+    con.executescript(_JOURNAL_SCHEMA_SQL)
+    con.commit()
+
+
+def _connect_and_init(db_path: Path) -> sqlite3.Connection:
+    """Open the trader.db, ensure tables exist, return the connection.
+
+    All dual-write helpers funnel through here so the schema is guaranteed
+    on first contact regardless of write order across event types.
+    """
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db_path)
+    _init_journal_tables(con)
+    return con
 
 
 # --- write -----------------------------------------------------------------

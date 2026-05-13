@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented here. Format roughly follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## 0.3.0 — 2026-05-13
+
+Phase B of the Option β SQLite migration: `decisions.jsonl` now dual-writes to `trader.db`.
+
+### Added
+- `decisions_io` module: `append`, `read_raw`, plus `_normalize` / `_canonical_payload` / `_dedup_key` helpers.
+- `trading-agent-skills-decisions` CLI with `append`, `migrate-to-sqlite`, `export-jsonl` subcommands.
+- SQLite `decisions` table (single wide table with promoted columns + JSON payload + sha256 dedup_key).
+
+### Changed
+- `decision_log.write_intent` / `write_outcome` now route through `decisions_io.append` (transparent — same JSONL contract, plus SQLite mirror).
+- `decision_log.reconcile_decisions` / `filter_decisions` now consume `decisions_io.read_raw` (SQLite-first with JSONL fallback).
+
+### Migration
+- Run `trading-agent-skills-decisions migrate-to-sqlite --decisions-path <jsonl>` once per account. Idempotent.
+- JSONL remains canonical during a dual-write window; weekend cutover scheduled 2026-05-16. Drift-check via `export-jsonl` + diff.
+
 ## 0.2.0 — 2026-05-11
 
 ### Added

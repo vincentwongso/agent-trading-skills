@@ -110,9 +110,8 @@ def write_intent(
         "charter_version": charter_version,
         "tick_id": tick_id,
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    from trading_agent_skills.decisions_io import append as _decisions_append
+    _decisions_append(path, record)
     return record
 
 
@@ -154,9 +153,8 @@ def write_outcome(
         "tick_id": tick_id,
         "is_outcome": True,
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record) + "\n")
+    from trading_agent_skills.decisions_io import append as _decisions_append
+    _decisions_append(path, record)
     return record
 
 

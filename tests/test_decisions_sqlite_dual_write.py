@@ -17,6 +17,7 @@ from trading_agent_skills.decisions_io import (
     _sqlite_write,
     append as decisions_append,
 )
+from trading_agent_skills.decision_log import write_intent, write_outcome
 
 
 def test_normalize_keeps_ts_when_present() -> None:
@@ -317,3 +318,59 @@ def test_append_propagates_sqlite_failure_after_jsonl_write(tmp_path: Path, monk
     with pytest.raises(sqlite3.OperationalError):
         decisions_append(decisions_path, rec)
     assert decisions_path.read_text(encoding="utf-8").strip()
+
+
+def test_decision_log_write_intent_dual_writes(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "7000522" / "decisions.jsonl"
+    write_intent(
+        decisions_path,
+        kind="skip",
+        symbol="XAUUSD",
+        ticket=None,
+        setup_type="monday_asian_open_filter",
+        reasoning="testing",
+        skills_used=["x"],
+        guardian_status="CLEAR",
+        checklist_verdict=None,
+        execution=None,
+        charter_version=1,
+        tick_id="2026-05-11T00:00:00Z",
+    )
+    line = decisions_path.read_text(encoding="utf-8").strip()
+    parsed = json.loads(line)
+    assert parsed["kind"] == "skip"
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    row = con.execute(
+        "SELECT record_type, schema_version, tick_id, symbol FROM decisions"
+    ).fetchone()
+    con.close()
+    assert row == ("skip", 1, "2026-05-11T00:00:00Z", "XAUUSD")
+
+
+def test_decision_log_write_outcome_dual_writes(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "7000522" / "decisions.jsonl"
+    write_intent(
+        decisions_path,
+        kind="open", symbol="XAUUSD", ticket=None,
+        setup_type="x", reasoning="x", skills_used=[],
+        guardian_status="CLEAR", checklist_verdict=None,
+        execution={"side": "BUY", "volume": "1.0", "entry_price": "100", "sl": "99", "tp": "101"},
+        charter_version=1, tick_id="2026-05-11T00:00:00Z",
+    )
+    write_outcome(
+        decisions_path,
+        tick_id="2026-05-11T00:00:00Z",
+        kind="open", symbol="XAUUSD",
+        execution_status="filled",
+        ticket=12345,
+        actual_fill_price="100.01",
+        failure_reason=None,
+    )
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    rows = list(con.execute(
+        "SELECT record_type, is_outcome FROM decisions ORDER BY id"
+    ))
+    con.close()
+    assert rows == [("open", None), ("open", 1)]

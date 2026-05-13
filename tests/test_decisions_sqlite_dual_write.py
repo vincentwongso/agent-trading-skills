@@ -553,3 +553,89 @@ def test_cli_append_rejects_record_without_timestamp(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "timestamp" in result.stderr.lower()
     assert not decisions_path.exists()
+
+
+def test_cli_migrate_to_sqlite_inserts_all_valid_rows(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "7000522" / "decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True)
+    records = [
+        {"ts": "2026-05-11T00:00:00Z", "type": "stage1", "fire": "stage1"},
+        {"ts": "2026-05-11T01:00:00Z", "type": "stage2-complete", "run_id": "r1"},
+        {"timestamp": "2026-05-11T02:00:00Z", "type": "stage2-complete", "run_id": "r2"},
+        {"schema_version": 1, "ts": "2026-05-11T03:00:00Z", "kind": "skip", "symbol": "XAUUSD"},
+    ]
+    with decisions_path.open("w", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "migrate-to-sqlite",
+            "--decisions-path", str(decisions_path),
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    count = con.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    con.close()
+    assert count == 4
+    summary = json.loads(result.stdout)
+    assert summary == {"inserted": 4, "duplicates": 0, "invalid": 0}
+
+
+def test_cli_migrate_is_idempotent(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    decisions_path.write_text(
+        json.dumps({"ts": "2026-05-11T00:00:00Z", "type": "stage1"}) + "\n",
+        encoding="utf-8",
+    )
+    for _ in range(2):
+        subprocess.run(
+            [
+                sys.executable, "-m", "trading_agent_skills.cli.decisions", "migrate-to-sqlite",
+                "--decisions-path", str(decisions_path),
+            ],
+            check=True, capture_output=True, text=True,
+        )
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    count = con.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    con.close()
+    assert count == 1
+
+
+def test_cli_migrate_skips_invalid_rows(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    with decisions_path.open("w", encoding="utf-8") as f:
+        f.write(json.dumps({"ts": "2026-05-11T00:00:00Z", "type": "stage1"}) + "\n")
+        f.write(json.dumps({"type": "stage1"}) + "\n")
+        f.write(json.dumps({"ts": "2026-05-11T01:00:00Z", "type": "stage2"}) + "\n")
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "migrate-to-sqlite",
+            "--decisions-path", str(decisions_path),
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    summary = json.loads(result.stdout)
+    assert summary == {"inserted": 2, "duplicates": 0, "invalid": 1}
+    assert "line 2" in result.stderr.lower() or "invalid" in result.stderr.lower()
+
+
+def test_cli_migrate_dry_run_does_not_write(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    decisions_path.write_text(
+        json.dumps({"ts": "2026-05-11T00:00:00Z", "type": "stage1"}) + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "migrate-to-sqlite",
+            "--decisions-path", str(decisions_path),
+            "--dry-run",
+        ],
+        check=True, capture_output=True, text=True,
+    )
+    assert not _sibling_db_path(decisions_path).exists()

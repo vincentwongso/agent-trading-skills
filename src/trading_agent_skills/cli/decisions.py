@@ -136,6 +136,29 @@ def _cmd_migrate_to_sqlite(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export_jsonl(args: argparse.Namespace) -> int:
+    """Re-emit JSONL from SQLite. Uses _read_raw_sqlite directly (NOT the
+    public read_raw) — we want to verify SQLite is correct, not fall through
+    to JSONL silently."""
+    from trading_agent_skills.decisions_io import _read_raw_sqlite, _sibling_db_path
+
+    decisions_path = Path(args.decisions_path).expanduser()
+    db_path = _sibling_db_path(decisions_path)
+    if not db_path.exists():
+        print(f"trader.db not found: {db_path}", file=sys.stderr)
+        return 1
+
+    out_path = Path(args.out).expanduser()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with out_path.open("w", encoding="utf-8") as f:
+        for rec in _read_raw_sqlite(db_path):
+            f.write(json.dumps(rec, separators=(",", ":"), ensure_ascii=False) + "\n")
+            count += 1
+    print(json.dumps({"records_exported": count, "out": str(out_path)}))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="trading-agent-skills-decisions",
@@ -162,6 +185,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Parse and validate only; do not write to SQLite.",
     )
     sp_migrate.set_defaults(func=_cmd_migrate_to_sqlite)
+
+    sp_export = sub.add_parser(
+        "export-jsonl",
+        help="Emit JSONL from trader.db (for inspection / drift checks).",
+    )
+    sp_export.add_argument("--decisions-path", required=True)
+    sp_export.add_argument("--out", required=True)
+    sp_export.set_defaults(func=_cmd_export_jsonl)
 
     args = parser.parse_args(argv)
     return args.func(args)

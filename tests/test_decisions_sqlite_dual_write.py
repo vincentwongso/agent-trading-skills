@@ -639,3 +639,62 @@ def test_cli_migrate_dry_run_does_not_write(tmp_path: Path) -> None:
         check=True, capture_output=True, text=True,
     )
     assert not _sibling_db_path(decisions_path).exists()
+
+
+def test_cli_export_jsonl_round_trips(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "7000522" / "decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True)
+    records = [
+        {"ts": "2026-05-11T00:00:00Z", "type": "stage1", "fire": "stage1"},
+        {"ts": "2026-05-11T01:00:00Z", "type": "stage2-complete", "run_id": "r1"},
+        {"timestamp": "2026-05-11T02:00:00Z", "type": "stage3-managed",
+         "ticket_id": 88366813, "action": "hold"},
+    ]
+    with decisions_path.open("w", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+    subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "migrate-to-sqlite",
+            "--decisions-path", str(decisions_path),
+        ],
+        check=True, capture_output=True, text=True,
+    )
+
+    export_path = tmp_path / "exported.jsonl"
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "export-jsonl",
+            "--decisions-path", str(decisions_path),
+            "--out", str(export_path),
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+    exported = [json.loads(l) for l in export_path.read_text().splitlines()]
+    assert len(exported) == 3
+    assert exported[0]["type"] == "stage1"
+    assert exported[1]["type"] == "stage2-complete"
+    assert exported[2]["type"] == "stage3-managed"
+    assert exported[2]["timestamp"] == "2026-05-11T02:00:00Z"
+    assert exported[2]["ts"] == "2026-05-11T02:00:00Z"
+    assert exported[0]["record_type"] == "stage1"
+
+
+def test_cli_export_jsonl_errors_when_db_missing(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    decisions_path.write_text(
+        json.dumps({"ts": "2026-05-11T00:00:00Z", "type": "stage1"}) + "\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "export-jsonl",
+            "--decisions-path", str(decisions_path),
+            "--out", str(tmp_path / "out.jsonl"),
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "trader.db" in result.stderr.lower()

@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -493,3 +494,62 @@ def test_filter_decisions_works_against_sqlite_only(tmp_path: Path) -> None:
     out = list(filter_decisions(decisions_path, kind="skip", symbol="NAS100"))
     assert len(out) == 1
     assert out[0]["symbol"] == "NAS100"
+
+
+import subprocess
+
+
+def test_cli_append_from_record_json_flag(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    rec = {"ts": "2026-05-11T00:00:00Z", "type": "stage1", "fire": "stage1"}
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "append",
+            "--decisions-path", str(decisions_path),
+            "--record-json", json.dumps(rec),
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert decisions_path.read_text(encoding="utf-8").strip()
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    count = con.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    con.close()
+    assert count == 1
+
+
+def test_cli_append_from_stdin(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    rec = {"ts": "2026-05-11T00:00:00Z", "type": "stage2-complete"}
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "append",
+            "--decisions-path", str(decisions_path),
+            "--record-json", "@-",
+        ],
+        input=json.dumps(rec),
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    rt = con.execute("SELECT record_type FROM decisions").fetchone()[0]
+    con.close()
+    assert rt == "stage2-complete"
+
+
+def test_cli_append_rejects_record_without_timestamp(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    rec = {"type": "stage1"}
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "append",
+            "--decisions-path", str(decisions_path),
+            "--record-json", json.dumps(rec),
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode != 0
+    assert "timestamp" in result.stderr.lower()
+    assert not decisions_path.exists()

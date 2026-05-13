@@ -303,7 +303,12 @@ def test_reconcile_handles_z_suffix_in_ts(tmp_path: Path) -> None:
                    "sl": "0.99", "tp": "1.02"},
         charter_version=1, tick_id="2026-04-30T22:00:00Z",
     )
-    # Older outcome with Z suffix
+    # Crafted outcome records go through the dual-write chokepoint so they
+    # land in both JSONL and SQLite. Phase B: read_raw prefers SQLite once
+    # the sibling trader.db is initialised, so bypass-append-to-JSONL is no
+    # longer visible to the reconciler.
+    from trading_agent_skills.decisions_io import append as _decisions_append
+
     older = {
         "schema_version": 1,
         "ts": "2026-04-30T22:00:01+00:00",  # earlier
@@ -312,7 +317,6 @@ def test_reconcile_handles_z_suffix_in_ts(tmp_path: Path) -> None:
         "tick_id": "2026-04-30T22:00:00Z",
         "is_outcome": True,
     }
-    # Newer outcome
     newer = {
         "schema_version": 1,
         "ts": "2026-04-30T22:00:02+00:00",  # later by 1 second
@@ -321,9 +325,8 @@ def test_reconcile_handles_z_suffix_in_ts(tmp_path: Path) -> None:
         "tick_id": "2026-04-30T22:00:00Z",
         "is_outcome": True,
     }
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(older) + "\n")
-        f.write(json.dumps(newer) + "\n")
+    _decisions_append(path, older)
+    _decisions_append(path, newer)
     reconciled = list(reconcile_decisions(path))
     assert len(reconciled) == 1
     assert reconciled[0]["execution"]["execution_status"] == "filled"

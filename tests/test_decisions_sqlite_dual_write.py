@@ -18,7 +18,12 @@ from trading_agent_skills.decisions_io import (
     append as decisions_append,
     read_raw,
 )
-from trading_agent_skills.decision_log import write_intent, write_outcome
+from trading_agent_skills.decision_log import (
+    filter_decisions,
+    reconcile_decisions,
+    write_intent,
+    write_outcome,
+)
 
 
 def test_normalize_keeps_ts_when_present() -> None:
@@ -442,3 +447,49 @@ def test_read_raw_returns_payload_dicts_intact(tmp_path: Path) -> None:
     assert out[0]["record_type"] == "stage3-managed"
     for k in rec:
         assert out[0][k] == rec[k]
+
+
+def test_reconcile_decisions_works_against_sqlite_only(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    write_intent(
+        decisions_path,
+        kind="open", symbol="XAUUSD", ticket=None,
+        setup_type="x", reasoning="x", skills_used=[],
+        guardian_status="CLEAR", checklist_verdict=None,
+        execution={"side": "BUY", "volume": "1.0", "entry_price": "100", "sl": "99", "tp": "101"},
+        charter_version=1, tick_id="2026-05-11T00:00:00Z",
+    )
+    write_outcome(
+        decisions_path,
+        tick_id="2026-05-11T00:00:00Z",
+        kind="open", symbol="XAUUSD",
+        execution_status="filled",
+        ticket=12345,
+        actual_fill_price="100.01",
+        failure_reason=None,
+    )
+    decisions_path.unlink()
+    out = list(reconcile_decisions(decisions_path))
+    assert len(out) == 1
+    merged = out[0]
+    assert merged["kind"] == "open"
+    assert merged["ticket"] == 12345
+    assert merged["execution"]["execution_status"] == "filled"
+    assert merged["execution"]["actual_fill_price"] == "100.01"
+
+
+def test_filter_decisions_works_against_sqlite_only(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    for sym in ("XAUUSD", "NAS100"):
+        write_intent(
+            decisions_path,
+            kind="skip", symbol=sym, ticket=None,
+            setup_type="x", reasoning="x", skills_used=[],
+            guardian_status="CLEAR", checklist_verdict=None,
+            execution=None,
+            charter_version=1, tick_id="2026-05-11T00:00:00Z",
+        )
+    decisions_path.unlink()
+    out = list(filter_decisions(decisions_path, kind="skip", symbol="NAS100"))
+    assert len(out) == 1
+    assert out[0]["symbol"] == "NAS100"

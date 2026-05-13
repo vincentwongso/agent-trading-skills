@@ -187,9 +187,11 @@ def reconcile_decisions(path: Path) -> Iterable[dict[str, Any]]:
       from bugs (intent failed-to-write but outcome ran) and the raw log is
       the source of truth.
     """
+    from trading_agent_skills.decisions_io import read_raw as _decisions_read_raw
+
     intents: dict[tuple[str, str, str], dict[str, Any]] = {}
     outcomes: dict[tuple[str, str, str], dict[str, Any]] = {}
-    for rec in _read_records(path):
+    for rec in _decisions_read_raw(path):
         key = (rec.get("tick_id"), rec.get("kind"), rec.get("symbol"))
         if rec.get("is_outcome"):
             existing = outcomes.get(key)

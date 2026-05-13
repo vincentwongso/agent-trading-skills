@@ -65,3 +65,49 @@ def _canonical_payload(record: dict[str, Any]) -> str:
 def _dedup_key(canonical_payload: str) -> str:
     """sha256 hex of the canonical projection. UNIQUE constraint key in SQLite."""
     return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+
+
+_DECISIONS_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS decisions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts              TEXT NOT NULL,
+    record_type     TEXT,
+    fire            TEXT,
+    run_id          TEXT,
+    symbol          TEXT,
+    ticket_id       INTEGER,
+    tick_id         TEXT,
+    schema_version  INTEGER,
+    account         TEXT,
+    paper_mode      INTEGER,
+    is_outcome      INTEGER,
+    payload         TEXT NOT NULL,
+    dedup_key       TEXT NOT NULL UNIQUE
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_ts          ON decisions(ts);
+CREATE INDEX IF NOT EXISTS idx_decisions_record_type ON decisions(record_type);
+CREATE INDEX IF NOT EXISTS idx_decisions_run_id      ON decisions(run_id)      WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_decisions_symbol      ON decisions(symbol)      WHERE symbol IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_decisions_ticket_id   ON decisions(ticket_id)   WHERE ticket_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_decisions_tick_id     ON decisions(tick_id)     WHERE tick_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_decisions_fire_ts     ON decisions(fire, ts);
+"""
+
+
+def _init_decisions_table(con: sqlite3.Connection) -> None:
+    """Create the `decisions` table + indexes if missing. Idempotent."""
+    con.executescript(_DECISIONS_SCHEMA_SQL)
+    con.commit()
+
+
+def _connect_and_init(db_path: Path) -> sqlite3.Connection:
+    """Open trader.db, ensure the decisions table exists, return the connection.
+
+    Does NOT initialise Phase A's journal tables — those are managed by
+    journal_io._connect_and_init. The two modules coexist on the same DB.
+    CREATE IF NOT EXISTS makes both initializers safe to call in any order.
+    """
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(db_path)
+    _init_decisions_table(con)
+    return con

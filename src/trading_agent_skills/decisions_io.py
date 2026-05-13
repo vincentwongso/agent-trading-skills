@@ -100,6 +100,84 @@ def _init_decisions_table(con: sqlite3.Connection) -> None:
     con.commit()
 
 
+def _sibling_db_path(jsonl_path: Path | str) -> Path:
+    """trader.db lives in the same dir as decisions.jsonl. Same as Phase A's
+    journal_io._sibling_db_path — kept local here to avoid cross-module coupling
+    on a one-line helper.
+    """
+    return Path(jsonl_path).expanduser().parent / "trader.db"
+
+
+def _derive_account(path: Path | str, record: dict[str, Any]) -> Optional[str]:
+    """Resolution order: record["account"] (non-empty) → regex on path → None."""
+    val = record.get("account")
+    if isinstance(val, str) and val:
+        return val
+    m = _ACCOUNT_PATH_RE.search(str(path))
+    return m.group("id") if m else None
+
+
+def _to_int_bool(v: Any) -> Optional[int]:
+    """Map True/False → 1/0, None → None. Other truthy values pass through bool()."""
+    if v is None:
+        return None
+    return int(bool(v))
+
+
+def _row_columns(path: Path | str, normalized: dict[str, Any]) -> dict[str, Any]:
+    """Project a normalized record onto the promoted-column set."""
+    return {
+        "ts": normalized["ts"],
+        "record_type": normalized.get("record_type"),
+        "fire": normalized.get("fire"),
+        "run_id": normalized.get("run_id"),
+        "symbol": normalized.get("symbol"),
+        "ticket_id": normalized.get("ticket_id"),
+        "tick_id": normalized.get("tick_id"),
+        "schema_version": normalized.get("schema_version"),
+        "account": _derive_account(path, normalized),
+        "paper_mode": _to_int_bool(normalized.get("paper_mode")),
+        "is_outcome": _to_int_bool(normalized.get("is_outcome")),
+    }
+
+
+def _sqlite_write(path: Path | str, normalized: dict[str, Any]) -> None:
+    """INSERT OR IGNORE the normalized record into the sibling trader.db.
+
+    Idempotent via UNIQUE(dedup_key). Caller is expected to have already run the
+    record through _normalize.
+    """
+    db_path = _sibling_db_path(path)
+    con = _connect_and_init(db_path)
+    try:
+        cols = _row_columns(path, normalized)
+        canonical = _canonical_payload(normalized)
+        dedup = _dedup_key(canonical)
+        # We store the ORIGINAL record JSON in payload (preserves key order for
+        # export round-trip). dedup_key uses the canonical projection for hash
+        # stability across key reorderings.
+        original_payload = json.dumps(normalized, separators=(",", ":"), ensure_ascii=False)
+        con.execute(
+            """
+            INSERT OR IGNORE INTO decisions (
+                ts, record_type, fire, run_id, symbol, ticket_id,
+                tick_id, schema_version, account, paper_mode, is_outcome,
+                payload, dedup_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                cols["ts"], cols["record_type"], cols["fire"], cols["run_id"],
+                cols["symbol"], cols["ticket_id"], cols["tick_id"],
+                cols["schema_version"], cols["account"],
+                cols["paper_mode"], cols["is_outcome"],
+                original_payload, dedup,
+            ),
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
 def _connect_and_init(db_path: Path) -> sqlite3.Connection:
     """Open trader.db, ensure the decisions table exists, return the connection.
 

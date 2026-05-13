@@ -13,6 +13,8 @@ from trading_agent_skills.decisions_io import (
     _dedup_key,
     _init_decisions_table,
     _normalize,
+    _sibling_db_path,
+    _sqlite_write,
 )
 
 
@@ -155,3 +157,96 @@ def test_connect_and_init_coexists_with_journal_tables(tmp_path: Path) -> None:
     # Phase B table added:
     assert "decisions" in table_names
     dcon.close()
+
+
+def test_sibling_db_path() -> None:
+    p = Path("/tmp/accounts/1234/decisions.jsonl")
+    assert _sibling_db_path(p) == Path("/tmp/accounts/1234/trader.db")
+
+
+def test_sqlite_write_inserts_decision_log_record(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "x" / "decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True)
+    record = _normalize({
+        "schema_version": 1,
+        "ts": "2026-05-11T00:00:00Z",
+        "kind": "skip",
+        "symbol": "XAUUSD",
+        "tick_id": "2026-05-11T00:00:00Z",
+        "reasoning": "test",
+        "skills_used": [],
+        "guardian_status": "CLEAR",
+        "checklist_verdict": None,
+        "execution": None,
+        "charter_version": 1,
+        "ticket": None,
+        "setup_type": None,
+    })
+    _sqlite_write(decisions_path, record)
+
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    rows = list(con.execute("SELECT ts, record_type, symbol, tick_id, schema_version, payload FROM decisions"))
+    con.close()
+    assert len(rows) == 1
+    ts, record_type, symbol, tick_id, schema_version, payload = rows[0]
+    assert ts == "2026-05-11T00:00:00Z"
+    assert record_type == "skip"
+    assert symbol == "XAUUSD"
+    assert tick_id == "2026-05-11T00:00:00Z"
+    assert schema_version == 1
+    parsed = json.loads(payload)
+    assert parsed["kind"] == "skip"
+    assert parsed["symbol"] == "XAUUSD"
+
+
+def test_sqlite_write_inserts_prompt_stage1_record(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "x" / "decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True)
+    record = _normalize({
+        "ts": "2026-05-11T01:00:00Z",
+        "type": "stage1-terminal",
+        "fire": "stage1",
+        "symbol": "XAUUSD",
+        "run_id": "abc123",
+        "decision": "triggered",
+        "paper_mode": True,
+        "account": "7000522",
+    })
+    _sqlite_write(decisions_path, record)
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    row = con.execute(
+        "SELECT ts, record_type, fire, run_id, symbol, account, paper_mode FROM decisions"
+    ).fetchone()
+    con.close()
+    assert row == ("2026-05-11T01:00:00Z", "stage1-terminal", "stage1", "abc123", "XAUUSD", "7000522", 1)
+
+
+def test_sqlite_write_extracts_account_from_path_when_absent(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "7000522" / "decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True)
+    record = _normalize({
+        "ts": "2026-05-11T01:00:00Z",
+        "type": "stage1-terminal",
+        "decision": "no-trigger",
+    })
+    _sqlite_write(decisions_path, record)
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    account = con.execute("SELECT account FROM decisions").fetchone()[0]
+    con.close()
+    assert account == "7000522"
+
+
+def test_sqlite_write_is_idempotent_on_dedup_key(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "x" / "decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True)
+    record = _normalize({"ts": "2026-05-11T00:00:00Z", "type": "stage1"})
+    _sqlite_write(decisions_path, record)
+    _sqlite_write(decisions_path, record)  # second write must be a no-op
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    count = con.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    con.close()
+    assert count == 1

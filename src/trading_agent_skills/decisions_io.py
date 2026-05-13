@@ -189,3 +189,33 @@ def _connect_and_init(db_path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(db_path)
     _init_decisions_table(con)
     return con
+
+
+def _append_line(path: Path | str, record: dict[str, Any]) -> None:
+    """Append a JSON line, flush, fsync. Creates parent dirs if missing.
+
+    Mirrors journal_io._append_line but kept local to avoid coupling. JSON keys
+    preserve insertion order (no sort_keys here) so payload round-trips on export.
+    """
+    import os
+
+    p = Path(path).expanduser()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    line = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
+    with open(p, "ab") as f:
+        f.write(line.encode("utf-8") + b"\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def append(path: Path | str, record: dict[str, Any]) -> dict[str, Any]:
+    """Dual-write a decision record: JSONL first (canonical), then SQLite.
+
+    Returns the post-normalization record dict. SQLite errors propagate to the
+    caller — JSONL is already durable so no data is lost, and the next
+    migrate-to-sqlite run is idempotent.
+    """
+    normalized = _normalize(record)
+    _append_line(path, normalized)
+    _sqlite_write(path, normalized)
+    return normalized

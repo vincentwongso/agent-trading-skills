@@ -15,6 +15,7 @@ from trading_agent_skills.decisions_io import (
     _normalize,
     _sibling_db_path,
     _sqlite_write,
+    append as decisions_append,
 )
 
 
@@ -250,3 +251,69 @@ def test_sqlite_write_is_idempotent_on_dedup_key(tmp_path: Path) -> None:
     count = con.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
     con.close()
     assert count == 1
+
+
+def test_append_writes_jsonl_then_sqlite(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "7000522" / "decisions.jsonl"
+    record = {
+        "ts": "2026-05-11T00:00:00Z",
+        "type": "stage1-terminal",
+        "fire": "stage1",
+        "decision": "triggered",
+        "symbol": "XAUUSD",
+        "run_id": "abc123",
+    }
+    out = decisions_append(decisions_path, record)
+    lines = decisions_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["type"] == "stage1-terminal"
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    count = con.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    con.close()
+    assert count == 1
+    assert out["record_type"] == "stage1-terminal"
+    assert out["ts"] == "2026-05-11T00:00:00Z"
+
+
+def test_append_creates_parent_dir(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "fresh" / "decisions.jsonl"
+    decisions_append(decisions_path, {"ts": "2026-05-11T00:00:00Z", "type": "stage1"})
+    assert decisions_path.exists()
+
+
+def test_append_dual_write_idempotency_in_sqlite(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    rec = {"ts": "2026-05-11T00:00:00Z", "type": "stage1"}
+    decisions_append(decisions_path, rec)
+    decisions_append(decisions_path, rec)
+    assert len(decisions_path.read_text().splitlines()) == 2
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    count = con.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
+    con.close()
+    assert count == 1
+
+
+def test_append_raises_on_missing_timestamp(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    with pytest.raises(DecisionSchemaError, match="timestamp"):
+        decisions_append(decisions_path, {"type": "stage1"})
+    assert not decisions_path.exists()
+
+
+def test_append_propagates_sqlite_failure_after_jsonl_write(tmp_path: Path, monkeypatch) -> None:
+    """If SQLite raises after JSONL append, the JSONL line is durable and the
+    exception propagates. Backfill will pick it up later."""
+    import trading_agent_skills.decisions_io as decisions_io_mod
+
+    decisions_path = tmp_path / "decisions.jsonl"
+    rec = {"ts": "2026-05-11T00:00:00Z", "type": "stage1"}
+
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("simulated SQLite failure")
+
+    monkeypatch.setattr(decisions_io_mod, "_sqlite_write", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        decisions_append(decisions_path, rec)
+    assert decisions_path.read_text(encoding="utf-8").strip()

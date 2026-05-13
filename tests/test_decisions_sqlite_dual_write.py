@@ -16,6 +16,7 @@ from trading_agent_skills.decisions_io import (
     _sibling_db_path,
     _sqlite_write,
     append as decisions_append,
+    read_raw,
 )
 from trading_agent_skills.decision_log import write_intent, write_outcome
 
@@ -374,3 +375,70 @@ def test_decision_log_write_outcome_dual_writes(tmp_path: Path) -> None:
     ))
     con.close()
     assert rows == [("open", None), ("open", 1)]
+
+
+def test_read_raw_returns_sqlite_when_db_exists(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    rec_a = {"ts": "2026-05-11T01:00:00Z", "type": "stage1", "fire": "stage1"}
+    rec_b = {"ts": "2026-05-11T02:00:00Z", "type": "stage2-complete", "fire": "stage2"}
+    decisions_append(decisions_path, rec_a)
+    decisions_append(decisions_path, rec_b)
+    out = list(read_raw(decisions_path))
+    assert [r["type"] for r in out] == ["stage1", "stage2-complete"]
+
+
+def test_read_raw_falls_back_to_jsonl_when_db_missing(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    decisions_path.write_text(
+        json.dumps({"ts": "2026-05-11T00:00:00Z", "type": "stage1"}) + "\n",
+        encoding="utf-8",
+    )
+    assert not _sibling_db_path(decisions_path).exists()
+    out = list(read_raw(decisions_path))
+    assert len(out) == 1
+    assert out[0]["type"] == "stage1"
+
+
+def test_read_raw_falls_back_to_jsonl_when_table_uninitialized(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "decisions.jsonl"
+    decisions_path.write_text(
+        json.dumps({"ts": "2026-05-11T00:00:00Z", "type": "stage1"}) + "\n",
+        encoding="utf-8",
+    )
+    db_path = _sibling_db_path(decisions_path)
+    con = sqlite3.connect(db_path)
+    con.execute("CREATE TABLE foo (id INTEGER)")
+    con.commit()
+    con.close()
+    out = list(read_raw(decisions_path))
+    assert len(out) == 1
+    assert out[0]["type"] == "stage1"
+
+
+def test_read_raw_sqlite_only(tmp_path: Path) -> None:
+    """After deleting JSONL, read_raw still returns rows via SQLite."""
+    decisions_path = tmp_path / "decisions.jsonl"
+    decisions_append(decisions_path, {"ts": "2026-05-11T00:00:00Z", "type": "stage1"})
+    decisions_path.unlink()
+    out = list(read_raw(decisions_path))
+    assert len(out) == 1
+
+
+def test_read_raw_returns_payload_dicts_intact(tmp_path: Path) -> None:
+    """The dict consumers see must match the dict we wrote (post-normalize)."""
+    decisions_path = tmp_path / "decisions.jsonl"
+    rec = {
+        "ts": "2026-05-11T00:00:00Z",
+        "type": "stage3-managed",
+        "fire": "stage3",
+        "symbol": "NAS100",
+        "ticket_id": 88366813,
+        "action": "hold",
+        "paper_mode": False,
+    }
+    decisions_append(decisions_path, rec)
+    out = list(read_raw(decisions_path))
+    assert len(out) == 1
+    assert out[0]["record_type"] == "stage3-managed"
+    for k in rec:
+        assert out[0][k] == rec[k]

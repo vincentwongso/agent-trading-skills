@@ -219,3 +219,43 @@ def append(path: Path | str, record: dict[str, Any]) -> dict[str, Any]:
     _append_line(path, normalized)
     _sqlite_write(path, normalized)
     return normalized
+
+
+def _read_raw_jsonl(path: Path | str) -> Iterator[dict[str, Any]]:
+    """Stream all decisions from the JSONL file. Used as fallback when SQLite
+    is unavailable, and by the migration CLI as the authoritative source."""
+    p = Path(path).expanduser()
+    if not p.exists():
+        return
+    with p.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            yield json.loads(line)
+
+
+def _read_raw_sqlite(db_path: Path) -> Iterator[dict[str, Any]]:
+    """Stream all decisions from SQLite. Yields the original payload dicts so
+    callers see exactly the shape they wrote (plus the `record_type` addition
+    from _normalize)."""
+    con = sqlite3.connect(db_path)
+    try:
+        for (payload,) in con.execute("SELECT payload FROM decisions ORDER BY ts, id"):
+            yield json.loads(payload)
+    finally:
+        con.close()
+
+
+def read_raw(path: Path | str) -> Iterator[dict[str, Any]]:
+    """Iterate all decisions. Prefers SQLite when sibling trader.db exists with
+    the decisions table initialized; falls back to JSONL otherwise."""
+    db_path = _sibling_db_path(path)
+    if db_path.exists():
+        try:
+            yield from _read_raw_sqlite(db_path)
+            return
+        except sqlite3.OperationalError:
+            # decisions table not initialised yet — fall through.
+            pass
+    yield from _read_raw_jsonl(path)

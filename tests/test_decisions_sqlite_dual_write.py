@@ -698,3 +698,49 @@ def test_cli_export_jsonl_errors_when_db_missing(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "trader.db" in result.stderr.lower()
+
+
+FIXTURE_PATH = Path(__file__).parent / "fixtures" / "decisions_sample.jsonl"
+
+
+def test_production_fixture_migrates_cleanly(tmp_path: Path) -> None:
+    """Regression net for prompt-emitted record shapes.
+
+    The fixture covers every observed kind/type value from live data. If a
+    future schema change breaks compatibility, this test fails before live
+    deploy."""
+    decisions_path = tmp_path / "accounts" / "TEST_ACCOUNT" / "decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True)
+
+    fixture_lines = FIXTURE_PATH.read_text(encoding="utf-8").splitlines()
+    expected_rows = sum(1 for l in fixture_lines if l.strip())
+    decisions_path.write_text("\n".join(fixture_lines) + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "migrate-to-sqlite",
+            "--decisions-path", str(decisions_path),
+        ],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["invalid"] == 0, f"Fixture has invalid rows: {result.stderr}"
+    assert summary["duplicates"] == 0
+    assert summary["inserted"] == expected_rows
+
+
+def test_production_fixture_read_raw_returns_all_rows(tmp_path: Path) -> None:
+    decisions_path = tmp_path / "accounts" / "TEST_ACCOUNT" / "decisions.jsonl"
+    decisions_path.parent.mkdir(parents=True)
+    decisions_path.write_text(FIXTURE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    subprocess.run(
+        [
+            sys.executable, "-m", "trading_agent_skills.cli.decisions", "migrate-to-sqlite",
+            "--decisions-path", str(decisions_path),
+        ],
+        check=True, capture_output=True, text=True,
+    )
+    out = list(read_raw(decisions_path))
+    expected = sum(1 for l in FIXTURE_PATH.read_text().splitlines() if l.strip())
+    assert len(out) == expected

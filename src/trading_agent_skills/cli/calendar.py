@@ -18,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -100,6 +100,18 @@ def _filter_within_hours(payload: dict, hours: int | None, now_utc: datetime) ->
     return payload
 
 
+def _filter_within_hours_past(payload: dict, hours: int | None, now_utc: datetime) -> dict:
+    if hours is None or "events" not in payload:
+        return payload
+    cutoff_minutes = hours * 60
+    payload = dict(payload)
+    payload["events"] = [
+        e for e in payload["events"]
+        if e.get("minutes_since", 0) <= cutoff_minutes
+    ]
+    return payload
+
+
 def _filter_within_days(payload: dict, days: int | None, now_utc: datetime) -> dict:
     if days is None or "earnings" not in payload:
         return payload
@@ -149,6 +161,7 @@ def run(
             if args.raw:
                 return _emit(resp.payload)
             enriched = enrich_events(resp.payload, now_utc=now)
+            enriched = _filter_within_hours_past(enriched, args.within_hours, now)
             return _emit(enriched)
         if args.noun == "economic" and args.verb == "find":
             # Pass --currency and --impact through to the upstream request:
@@ -161,6 +174,8 @@ def run(
                 impact=_impact_list(args.impact),
                 limit=25,
             )
+            if args.raw:
+                return _emit(resp.payload)
             result = find_events(
                 resp.payload.get("events", []),
                 title=args.title,
@@ -170,6 +185,13 @@ def run(
             result["fetched_at_utc"] = now.isoformat()
             result["source"] = resp.payload.get("source")
             result["stale"] = bool(resp.payload.get("stale", False))
+            cutoff_date = (now.date() - timedelta(days=args.days_back)).isoformat()
+            result["matches"] = [
+                e for e in result["matches"] if e["scheduledAt"][:10] >= cutoff_date
+            ]
+            result["near_misses"] = [
+                e for e in result["near_misses"] if e["scheduledAt"][:10] >= cutoff_date
+            ]
             return _emit(result)
         if args.noun == "earnings" and args.verb == "upcoming":
             resp = client.fetch_earnings(

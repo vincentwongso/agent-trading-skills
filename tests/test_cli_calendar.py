@@ -351,6 +351,87 @@ def test_calix_network_error_returns_exit_2(tmp_path, capsys) -> None:
     assert out["source"] == "calix"
 
 
+def test_economic_past_within_hours_filters_old_events(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "tradays", "stale": False,
+            "events": [
+                {"id": "recent", "title": "X", "currency": "USD", "impact": "High",
+                 "scheduledAt": "2026-05-14T10:00:00Z", "forecast": None,
+                 "previous": None, "actual": "1%"},   # 2h ago
+                {"id": "old", "title": "Y", "currency": "USD", "impact": "High",
+                 "scheduledAt": "2026-05-12T10:00:00Z", "forecast": None,
+                 "previous": None, "actual": "2%"},   # ~50h ago
+            ],
+        })
+
+    rc = run(
+        ["economic", "past", "--within-hours", "12"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert [e["id"] for e in out["events"]] == ["recent"]
+
+
+def test_economic_find_raw_flag_emits_passthrough(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    upstream = {
+        "updatedAt": "x", "source": "tradays", "stale": False,
+        "events": [
+            {"id": "cpi", "title": "CPI y/y", "currency": "USD", "impact": "High",
+             "scheduledAt": "2026-05-12T12:30:00Z", "forecast": "3.7%",
+             "previous": "3.3%", "actual": "3.8%"},
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=upstream)
+
+    rc = run(
+        ["economic", "find", "--title", "CPI", "--currency", "USD", "--raw"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out == upstream  # raw passthrough — no find_events wrapping
+
+
+def test_economic_find_days_back_drops_old_matches(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "tradays", "stale": False,
+            "events": [
+                {"id": "recent-cpi", "title": "CPI y/y", "currency": "USD",
+                 "impact": "High", "scheduledAt": "2026-05-13T12:30:00Z",
+                 "forecast": None, "previous": None, "actual": "3.8%"},
+                {"id": "old-cpi", "title": "CPI y/y", "currency": "USD",
+                 "impact": "High", "scheduledAt": "2026-05-01T12:30:00Z",
+                 "forecast": None, "previous": None, "actual": "3.5%"},
+            ],
+        })
+
+    rc = run(
+        ["economic", "find", "--title", "CPI", "--currency", "USD", "--days-back", "3"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    # old-cpi (May 1) is >3 days back; recent-cpi (May 13) stays.
+    assert [m["id"] for m in out["matches"]] == ["recent-cpi"]
+
+
 def test_stale_payload_marks_degraded_true(tmp_path, capsys) -> None:
     from datetime import datetime, timezone
 

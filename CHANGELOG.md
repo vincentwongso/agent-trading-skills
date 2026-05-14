@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented here. Format roughly follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
+## Unreleased
+
+### Added
+- `trading-agent-skills-calendar` CLI with `economic upcoming|past|find` and `earnings upcoming|past` subcommands. Wraps the existing `CalixClient`, adds time enrichment (`minutes_until`, `minutes_since`, `local_time_aest`), and exposes `find_events` for "what did X print at" lookups.
+- `.claude/skills/calendar/SKILL.md` — first-class calendar skill so any agent can ground event-timing and event-value claims in Calix data instead of confabulating from training data.
+- `CalixClient.fetch_economic_past()` and `CalixClient.fetch_earnings_past()`. Earnings methods now accept an optional `symbols` filter.
+
 ## 0.3.0 — 2026-05-13
 
 Phase B of the Option β SQLite migration: `decisions.jsonl` now dual-writes to `trader.db`.

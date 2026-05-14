@@ -190,3 +190,31 @@ def test_non_json_response_raises_calix_unavailable(tmp_path: Path) -> None:
     client = _client_with_handler(handler, tmp_path)
     with pytest.raises(CalixUnavailable, match="non-JSON"):
         client.fetch_economic(currencies="majors")
+
+
+# ---------- past economic / earnings ----------------------------------------
+
+
+def test_fetch_economic_past_hits_correct_path(tmp_path: Path) -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        assert request.url.params["currencies"] == "USD"
+        assert request.url.params["impact"] == "High"
+        assert request.url.params["limit"] == "10"
+        return httpx.Response(200, json=_ok_economic_payload(stale=False))
+
+    client = _client_with_handler(handler, tmp_path)
+    resp = client.fetch_economic_past(currencies=["USD"], impact=["High"], limit=10)
+    assert resp.stale is False
+    assert seen_paths == ["/v1/calendar/economic/past"]
+
+
+def test_fetch_economic_past_string_currencies_alias(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["currencies"] == "all"
+        return httpx.Response(200, json=_ok_economic_payload())
+
+    client = _client_with_handler(handler, tmp_path)
+    client.fetch_economic_past(currencies="all")

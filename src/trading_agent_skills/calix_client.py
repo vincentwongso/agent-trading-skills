@@ -137,6 +137,27 @@ class CalixClient:
             },
         )
 
+    def fetch_economic_past(
+        self,
+        *,
+        currencies: Iterable[str] | str = "majors",
+        impact: Iterable[str] = ("High",),
+        limit: int = 10,
+    ) -> CalixResponse:
+        currencies_param: str
+        if isinstance(currencies, str):
+            currencies_param = currencies
+        else:
+            currencies_param = ",".join(currencies)
+        return self._get(
+            "/v1/calendar/economic/past",
+            {
+                "currencies": currencies_param,
+                "impact": ",".join(impact),
+                "limit": str(limit),
+            },
+        )
+
     def fetch_earnings(self, *, limit: int = 20) -> CalixResponse:
         return self._get(
             "/v1/calendar/earnings/upcoming",

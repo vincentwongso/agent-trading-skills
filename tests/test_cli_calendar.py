@@ -151,3 +151,62 @@ def test_economic_past_returns_enriched_with_actuals(tmp_path, capsys) -> None:
     assert e["actual_present"] is True
     assert e["is_past"] is True
     assert e["minutes_since"] > 0
+
+
+def test_economic_find_cpi_on_specific_date(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    payload = {
+        "updatedAt": "2026-05-14T12:00:00Z", "source": "tradays", "stale": False,
+        "events": [
+            {"id": "cpi-yy", "title": "CPI y/y", "currency": "USD", "impact": "High",
+             "scheduledAt": "2026-05-12T12:30:00Z",
+             "forecast": "3.7%", "previous": "3.3%", "actual": "3.8%"},
+            {"id": "cpi-mm", "title": "CPI m/m", "currency": "USD", "impact": "High",
+             "scheduledAt": "2026-05-12T12:30:00Z",
+             "forecast": "0.7%", "previous": "0.9%", "actual": "0.6%"},
+            {"id": "ppi-mm", "title": "PPI m/m", "currency": "USD", "impact": "High",
+             "scheduledAt": "2026-05-13T12:30:00Z",
+             "forecast": "0.4%", "previous": "0.7%", "actual": "1.4%"},
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/calendar/economic/past"
+        # find broadens the request — currencies=all, impact=all-levels
+        assert request.url.params["currencies"] == "all"
+        return httpx.Response(200, json=payload)
+
+    rc = run(
+        ["economic", "find", "--title", "CPI", "--currency", "USD", "--date", "2026-05-12"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["query"] == {"title": "CPI", "currency": "USD", "date": "2026-05-12"}
+    titles = sorted(m["title"] for m in out["matches"])
+    assert titles == ["CPI m/m", "CPI y/y"]
+    # PPI is not a near miss (different title); verify no false positives.
+    assert all("PPI" not in m["title"] for m in out["matches"])
+
+
+def test_economic_find_no_match_returns_empty_lists(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "tradays", "stale": False, "events": [],
+        })
+
+    rc = run(
+        ["economic", "find", "--title", "UNICORN"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["matches"] == []
+    assert out["near_misses"] == []

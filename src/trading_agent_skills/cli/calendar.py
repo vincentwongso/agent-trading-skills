@@ -149,6 +149,24 @@ def run(
                 return _emit(resp.payload)
             enriched = enrich_events(resp.payload, now_utc=now)
             return _emit(enriched)
+        if args.noun == "economic" and args.verb == "find":
+            # Broaden the upstream request so we never miss a candidate;
+            # narrow client-side via find_events.
+            resp = client.fetch_economic_past(
+                currencies="all",
+                impact=["High", "Medium", "Low", "Holiday"],
+                limit=25,
+            )
+            result = find_events(
+                resp.payload.get("events", []),
+                title=args.title,
+                currency=args.currency,
+                date=args.date,
+            )
+            result["fetched_at_utc"] = now.isoformat()
+            result["source"] = resp.payload.get("source")
+            result["stale"] = bool(resp.payload.get("stale", False))
+            return _emit(result)
     except CalixUnavailable as exc:
         return _emit_calix_error(exc)
 

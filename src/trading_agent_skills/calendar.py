@@ -39,6 +39,20 @@ def _enrich_economic(event: dict, now_utc: datetime) -> dict:
     return enriched
 
 
+def _enrich_earnings(entry: dict, now_utc: datetime) -> dict:
+    enriched = dict(entry)
+    # scheduledDate is YYYY-MM-DD; pin to UTC midnight for comparison.
+    scheduled_date = datetime.fromisoformat(entry["scheduledDate"]).replace(tzinfo=timezone.utc)
+    delta_days = (scheduled_date.date() - now_utc.date()).days
+    enriched["days_until"] = delta_days
+    enriched["days_since"] = -delta_days if delta_days < 0 else 0
+    enriched["is_past"] = delta_days < 0
+    enriched["actual_present"] = (
+        entry.get("epsActual") is not None or entry.get("revenueActual") is not None
+    )
+    return enriched
+
+
 def enrich_events(payload: dict[str, Any], *, now_utc: datetime) -> dict[str, Any]:
     """Add computed time + presence fields to each event in a Calix payload.
 
@@ -47,6 +61,7 @@ def enrich_events(payload: dict[str, Any], *, now_utc: datetime) -> dict[str, An
       - degraded (top-level, mirrors stale)
       - per-event: minutes_until, minutes_since, is_past, local_time_aest,
         actual_present
+      - per-earnings: days_until, days_since, is_past, actual_present
     """
     iso_now = now_utc.isoformat()
     out = dict(payload)
@@ -55,4 +70,6 @@ def enrich_events(payload: dict[str, Any], *, now_utc: datetime) -> dict[str, An
     out["degraded"] = bool(payload.get("stale", False))
     if "events" in payload:
         out["events"] = [_enrich_economic(e, now_utc) for e in payload["events"]]
+    if "earnings" in payload:
+        out["earnings"] = [_enrich_earnings(e, now_utc) for e in payload["earnings"]]
     return out

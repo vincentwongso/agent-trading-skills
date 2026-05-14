@@ -52,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     find_sub = econ_verb.add_parser("find", help="Find a specific past event by title")
     find_sub.add_argument("--title", required=True)
     find_sub.add_argument("--currency", default=None)
+    find_sub.add_argument("--impact", default="High")
     find_sub.add_argument("--date", default=None, help="YYYY-MM-DD")
     find_sub.add_argument("--days-back", type=int, default=7)
     find_sub.add_argument("--raw", action="store_true")
@@ -150,11 +151,14 @@ def run(
             enriched = enrich_events(resp.payload, now_utc=now)
             return _emit(enriched)
         if args.noun == "economic" and args.verb == "find":
-            # Broaden the upstream request so we never miss a candidate;
-            # narrow client-side via find_events.
+            # Pass --currency and --impact through to the upstream request:
+            # Calix's past endpoint caps at 25 results sorted newest-first, so
+            # broadening to all-currencies/all-impact crowds out older events
+            # before find_events can see them. Narrowing upstream keeps older
+            # same-currency events inside the window.
             resp = client.fetch_economic_past(
-                currencies="all",
-                impact=["High", "Medium", "Low", "Holiday"],
+                currencies=args.currency or "all",
+                impact=_impact_list(args.impact),
                 limit=25,
             )
             result = find_events(

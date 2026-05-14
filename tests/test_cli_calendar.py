@@ -173,8 +173,9 @@ def test_economic_find_cpi_on_specific_date(tmp_path, capsys) -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/calendar/economic/past"
-        # find broadens the request — currencies=all, impact=all-levels
-        assert request.url.params["currencies"] == "all"
+        # find passes --currency / --impact through to narrow the upstream query
+        assert request.url.params["currencies"] == "USD"
+        assert request.url.params["impact"] == "High"
         return httpx.Response(200, json=payload)
 
     rc = run(
@@ -210,6 +211,29 @@ def test_economic_find_no_match_returns_empty_lists(tmp_path, capsys) -> None:
     assert rc == 0
     assert out["matches"] == []
     assert out["near_misses"] == []
+
+
+def test_economic_find_without_currency_falls_back_to_all(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # No --currency given → upstream currencies defaults to "all";
+        # --impact still defaults to High only (not all four levels).
+        assert request.url.params["currencies"] == "all"
+        assert request.url.params["impact"] == "High"
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "tradays", "stale": False, "events": [],
+        })
+
+    rc = run(
+        ["economic", "find", "--title", "CPI"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["matches"] == []
 
 
 def test_earnings_upcoming_returns_enriched(tmp_path, capsys) -> None:

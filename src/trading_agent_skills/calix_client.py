@@ -158,11 +158,27 @@ class CalixClient:
             },
         )
 
-    def fetch_earnings(self, *, limit: int = 20) -> CalixResponse:
-        return self._get(
-            "/v1/calendar/earnings/upcoming",
-            {"limit": str(limit)},
-        )
+    def fetch_earnings(
+        self,
+        *,
+        symbols: Iterable[str] | str | None = None,
+        limit: int = 20,
+    ) -> CalixResponse:
+        params: dict[str, str] = {"limit": str(limit)}
+        if symbols is not None:
+            params["symbols"] = symbols if isinstance(symbols, str) else ",".join(symbols)
+        return self._get("/v1/calendar/earnings/upcoming", params)
+
+    def fetch_earnings_past(
+        self,
+        *,
+        symbols: Iterable[str] | str | None = None,
+        limit: int = 20,
+    ) -> CalixResponse:
+        params: dict[str, str] = {"limit": str(limit)}
+        if symbols is not None:
+            params["symbols"] = symbols if isinstance(symbols, str) else ",".join(symbols)
+        return self._get("/v1/calendar/earnings/past", params)
 
 
 __all__ = [

@@ -218,3 +218,26 @@ def test_fetch_economic_past_string_currencies_alias(tmp_path: Path) -> None:
 
     client = _client_with_handler(handler, tmp_path)
     client.fetch_economic_past(currencies="all")
+
+
+def test_fetch_earnings_past_hits_correct_path(tmp_path: Path) -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        return httpx.Response(200, json=_ok_earnings_payload())
+
+    client = _client_with_handler(handler, tmp_path)
+    resp = client.fetch_earnings_past(limit=20)
+    assert resp.payload["earnings"][0]["symbol"] == "AAPL"
+    assert seen_paths == ["/v1/calendar/earnings/past"]
+
+
+def test_fetch_earnings_past_with_symbols_filter(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["symbols"] == "AAPL,MSFT"
+        assert request.url.params["limit"] == "5"
+        return httpx.Response(200, json=_ok_earnings_payload())
+
+    client = _client_with_handler(handler, tmp_path)
+    client.fetch_earnings_past(symbols=["AAPL", "MSFT"], limit=5)

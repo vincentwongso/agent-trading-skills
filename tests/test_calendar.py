@@ -137,3 +137,62 @@ def test_earnings_with_no_actuals_marks_present_false() -> None:
     }
     out = enrich_events(payload, now_utc=NOW_UTC)
     assert out["earnings"][0]["actual_present"] is False
+
+
+from trading_agent_skills.calendar import find_events
+
+
+def _events_fixture() -> list[dict]:
+    return [
+        _econ_event("2026-05-12T12:30:00Z", actual="3.8%") | {
+            "id": "ff_usd_cpi_y_y_20260512", "title": "CPI y/y", "currency": "USD",
+        },
+        _econ_event("2026-05-12T12:30:00Z", actual="0.6%") | {
+            "id": "ff_usd_cpi_m_m_20260512", "title": "CPI m/m", "currency": "USD",
+        },
+        _econ_event("2026-05-12T12:30:00Z", actual="0.4%") | {
+            "id": "ff_usd_core_cpi_m_m_20260512", "title": "Core CPI m/m", "currency": "USD",
+        },
+        _econ_event("2026-05-13T12:30:00Z", actual="1.4%") | {
+            "id": "ff_usd_ppi_m_m_20260513", "title": "PPI m/m", "currency": "USD",
+        },
+        _econ_event("2026-05-08T12:30:00Z", actual="115K") | {
+            "id": "ff_usd_nonfarm_payrolls_20260508", "title": "Nonfarm Payrolls", "currency": "USD",
+        },
+    ]
+
+
+def test_find_substring_match_returns_all_cpi_variants() -> None:
+    result = find_events(_events_fixture(), title="CPI", currency=None, date=None)
+    titles = [m["title"] for m in result["matches"]]
+    assert sorted(titles) == ["CPI m/m", "CPI y/y", "Core CPI m/m"]
+    assert result["near_misses"] == []
+
+
+def test_find_with_currency_and_date_narrows_match() -> None:
+    result = find_events(_events_fixture(), title="CPI", currency="USD", date="2026-05-12")
+    titles = sorted(m["title"] for m in result["matches"])
+    assert titles == ["CPI m/m", "CPI y/y", "Core CPI m/m"]
+
+
+def test_find_returns_near_misses_when_date_doesnt_match() -> None:
+    result = find_events(_events_fixture(), title="CPI", currency="USD", date="2026-05-15")
+    assert result["matches"] == []
+    near_titles = sorted(m["title"] for m in result["near_misses"])
+    assert near_titles == ["CPI m/m", "CPI y/y", "Core CPI m/m"]
+
+
+def test_find_no_match_no_near_miss_returns_empty_lists() -> None:
+    result = find_events(_events_fixture(), title="UNICORN", currency=None, date=None)
+    assert result["matches"] == []
+    assert result["near_misses"] == []
+
+
+def test_find_query_echoed_in_result() -> None:
+    result = find_events(_events_fixture(), title="CPI", currency="USD", date="2026-05-12")
+    assert result["query"] == {"title": "CPI", "currency": "USD", "date": "2026-05-12"}
+
+
+def test_find_currency_match_is_case_insensitive() -> None:
+    result = find_events(_events_fixture(), title="cpi", currency="usd", date=None)
+    assert len(result["matches"]) == 3

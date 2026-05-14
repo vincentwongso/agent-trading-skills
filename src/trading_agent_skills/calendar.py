@@ -73,3 +73,44 @@ def enrich_events(payload: dict[str, Any], *, now_utc: datetime) -> dict[str, An
     if "earnings" in payload:
         out["earnings"] = [_enrich_earnings(e, now_utc) for e in payload["earnings"]]
     return out
+
+
+def find_events(
+    events: list[dict],
+    *,
+    title: str,
+    currency: str | None,
+    date: str | None,
+) -> dict[str, Any]:
+    """Filter Calix economic events by case-insensitive title substring + optional
+    currency + optional date.
+
+    Returns ``{query, matches, near_misses}``:
+      - matches: events satisfying ALL provided filters
+      - near_misses: events that match title (+ currency if given) but NOT date,
+        included only when ``date`` was specified
+    """
+    title_norm = title.lower()
+    currency_norm = currency.upper() if currency else None
+
+    title_currency_hits: list[dict] = []
+    for e in events:
+        if title_norm not in e["title"].lower():
+            continue
+        if currency_norm is not None and e["currency"].upper() != currency_norm:
+            continue
+        title_currency_hits.append(e)
+
+    if date is None:
+        matches = title_currency_hits
+        near_misses: list[dict] = []
+    else:
+        matches = [e for e in title_currency_hits if e["scheduledAt"][:10] == date]
+        match_ids = {e["id"] for e in matches}
+        near_misses = [e for e in title_currency_hits if e["id"] not in match_ids]
+
+    return {
+        "query": {"title": title, "currency": currency, "date": date},
+        "matches": matches,
+        "near_misses": near_misses,
+    }

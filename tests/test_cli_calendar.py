@@ -210,3 +210,83 @@ def test_economic_find_no_match_returns_empty_lists(tmp_path, capsys) -> None:
     assert rc == 0
     assert out["matches"] == []
     assert out["near_misses"] == []
+
+
+def test_earnings_upcoming_returns_enriched(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/calendar/earnings/upcoming"
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "finnhub", "stale": False,
+            "earnings": [
+                {"symbol": "NVDA", "name": "NVIDIA Corp",
+                 "scheduledDate": "2026-05-20", "timing": "amc",
+                 "quarter": 1, "year": 2026},
+            ],
+        })
+
+    rc = run(
+        ["earnings", "upcoming"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["earnings"][0]["days_until"] == 6
+
+
+def test_earnings_past_with_symbols_filter(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/calendar/earnings/past"
+        assert request.url.params["symbols"] == "AAPL,MSFT"
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "finnhub", "stale": False,
+            "earnings": [
+                {"symbol": "AAPL", "name": "Apple Inc",
+                 "scheduledDate": "2026-04-30", "timing": "amc",
+                 "quarter": 2, "year": 2026,
+                 "epsEstimate": 1.99, "epsActual": 2.01,
+                 "revenueEstimate": 111853364107, "revenueActual": 111184000000},
+            ],
+        })
+
+    rc = run(
+        ["earnings", "past", "--symbols", "AAPL,MSFT", "--limit", "5"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    e = out["earnings"][0]
+    assert e["epsActual"] == 2.01
+    assert e["actual_present"] is True
+    assert e["is_past"] is True
+
+
+def test_within_days_filters_out_far_earnings(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "finnhub", "stale": False,
+            "earnings": [
+                {"symbol": "NEAR", "name": "x", "scheduledDate": "2026-05-15",
+                 "timing": "amc", "quarter": 1, "year": 2026},
+                {"symbol": "FAR",  "name": "y", "scheduledDate": "2026-06-30",
+                 "timing": "amc", "quarter": 2, "year": 2026},
+            ],
+        })
+
+    rc = run(
+        ["earnings", "upcoming", "--within-days", "7"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert [e["symbol"] for e in out["earnings"]] == ["NEAR"]

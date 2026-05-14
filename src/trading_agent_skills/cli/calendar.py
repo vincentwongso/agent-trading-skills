@@ -167,10 +167,27 @@ def run(
             result["source"] = resp.payload.get("source")
             result["stale"] = bool(resp.payload.get("stale", False))
             return _emit(result)
+        if args.noun == "earnings" and args.verb == "upcoming":
+            resp = client.fetch_earnings(
+                symbols=args.symbols,
+                limit=args.limit,
+            )
+            if args.raw:
+                return _emit(resp.payload)
+            enriched = enrich_events(resp.payload, now_utc=now)
+            enriched = _filter_within_days(enriched, args.within_days, now)
+            return _emit(enriched)
+        if args.noun == "earnings" and args.verb == "past":
+            resp = client.fetch_earnings_past(
+                symbols=args.symbols,
+                limit=args.limit,
+            )
+            if args.raw:
+                return _emit(resp.payload)
+            enriched = enrich_events(resp.payload, now_utc=now)
+            return _emit(enriched)
     except CalixUnavailable as exc:
         return _emit_calix_error(exc)
-
-    raise NotImplementedError(f"dispatch for {args.noun} {args.verb} not wired yet")
 
 
 def main() -> int:

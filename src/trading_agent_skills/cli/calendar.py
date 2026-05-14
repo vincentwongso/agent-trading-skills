@@ -1,0 +1,102 @@
+"""CLI for the calendar skill — economic / earnings, upcoming / past / find.
+
+Subcommand surface::
+
+  trading-agent-skills-calendar economic upcoming  [filters]
+  trading-agent-skills-calendar economic past      [filters]
+  trading-agent-skills-calendar economic find      --title SUBSTR [--currency CODE] [--date YYYY-MM-DD]
+  trading-agent-skills-calendar earnings upcoming  [filters]
+  trading-agent-skills-calendar earnings past      [filters]
+
+Output is JSON on stdout. Exit codes:
+  0  success (including empty results)
+  2  Calix unreachable / non-2xx / non-JSON  (also: argparse default for bad args)
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable
+
+from trading_agent_skills.calendar import enrich_events, find_events
+from trading_agent_skills.calix_client import (
+    DEFAULT_CACHE_DIR,
+    CalixClient,
+    CalixUnavailable,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="trading-agent-skills-calendar",
+        description="Look up upcoming / past economic events and earnings via Calix.",
+    )
+    noun = parser.add_subparsers(dest="noun", required=True)
+
+    # economic
+    econ = noun.add_parser("economic", help="Economic calendar events")
+    econ_verb = econ.add_subparsers(dest="verb", required=True)
+
+    for verb_name in ("upcoming", "past"):
+        sub = econ_verb.add_parser(verb_name, help=f"{verb_name.title()} economic events")
+        sub.add_argument("--currencies", default="majors")
+        sub.add_argument("--impact", default="High")
+        sub.add_argument("--limit", type=int, default=10)
+        sub.add_argument("--within-hours", type=int, default=None)
+        sub.add_argument("--raw", action="store_true")
+
+    find_sub = econ_verb.add_parser("find", help="Find a specific past event by title")
+    find_sub.add_argument("--title", required=True)
+    find_sub.add_argument("--currency", default=None)
+    find_sub.add_argument("--date", default=None, help="YYYY-MM-DD")
+    find_sub.add_argument("--days-back", type=int, default=7)
+    find_sub.add_argument("--raw", action="store_true")
+
+    # earnings
+    earn = noun.add_parser("earnings", help="Earnings releases")
+    earn_verb = earn.add_subparsers(dest="verb", required=True)
+
+    for verb_name in ("upcoming", "past"):
+        sub = earn_verb.add_parser(verb_name, help=f"{verb_name.title()} earnings")
+        sub.add_argument("--symbols", default=None)
+        sub.add_argument("--limit", type=int, default=10)
+        sub.add_argument("--within-days", type=int, default=None)
+        sub.add_argument("--raw", action="store_true")
+
+    return parser
+
+
+ClientFactory = Callable[[Path], CalixClient]
+
+
+def _default_client_factory(cache_dir: Path) -> CalixClient:
+    return CalixClient(cache_dir=cache_dir)
+
+
+def run(
+    argv: list[str],
+    *,
+    now_utc: datetime | None = None,
+    client_factory: ClientFactory | None = None,
+    cache_dir: Path | None = None,
+) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    now = now_utc or datetime.now(timezone.utc)
+    factory = client_factory or _default_client_factory
+    client = factory(cache_dir or DEFAULT_CACHE_DIR)
+
+    # Dispatch table — populated in subsequent tasks.
+    raise NotImplementedError(f"dispatch for {args.noun} {args.verb} not wired yet")
+
+
+def main() -> int:
+    return run(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented here. Format roughly follows [Keep a Changelog](https://keepachangelog.com/), versioning follows [SemVer](https://semver.org/).
 
-## Unreleased
+## 0.4.0 — 2026-05-14
 
 ### Added
 - `trading-agent-skills-calendar` CLI with `economic upcoming|past|find` and `earnings upcoming|past` subcommands. Wraps the existing `CalixClient`, adds time enrichment (`minutes_until`, `minutes_since`, `local_time_aest`), and exposes `find_events` for "what did X print at" lookups.

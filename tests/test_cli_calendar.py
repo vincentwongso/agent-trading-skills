@@ -116,3 +116,38 @@ def test_raw_flag_emits_passthrough_payload(tmp_path, capsys) -> None:
     out = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert out == upstream  # bytes-equal, no enrichment
+
+
+def test_economic_past_returns_enriched_with_actuals(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/calendar/economic/past"
+        assert request.url.params["currencies"] == "USD"
+        return httpx.Response(200, json={
+            "updatedAt": "2026-05-14T12:00:00Z",
+            "source": "tradays",
+            "stale": False,
+            "events": [
+                {
+                    "id": "ff_usd_cpi_y_y_20260512", "title": "CPI y/y",
+                    "currency": "USD", "impact": "High",
+                    "scheduledAt": "2026-05-12T12:30:00Z",
+                    "forecast": "3.7%", "previous": "3.3%", "actual": "3.8%",
+                },
+            ],
+        })
+
+    rc = run(
+        ["economic", "past", "--currencies", "USD"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    e = out["events"][0]
+    assert e["actual"] == "3.8%"
+    assert e["actual_present"] is True
+    assert e["is_past"] is True
+    assert e["minutes_since"] > 0

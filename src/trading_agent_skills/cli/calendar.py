@@ -139,6 +139,16 @@ def run(
             enriched = enrich_events(resp.payload, now_utc=now)
             enriched = _filter_within_hours(enriched, args.within_hours, now)
             return _emit(enriched)
+        if args.noun == "economic" and args.verb == "past":
+            resp = client.fetch_economic_past(
+                currencies=args.currencies,
+                impact=_impact_list(args.impact),
+                limit=args.limit,
+            )
+            if args.raw:
+                return _emit(resp.payload)
+            enriched = enrich_events(resp.payload, now_utc=now)
+            return _emit(enriched)
     except CalixUnavailable as exc:
         return _emit_calix_error(exc)
 

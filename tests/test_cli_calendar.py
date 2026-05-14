@@ -290,3 +290,57 @@ def test_within_days_filters_out_far_earnings(tmp_path, capsys) -> None:
     )
     out = json.loads(capsys.readouterr().out)
     assert [e["symbol"] for e in out["earnings"]] == ["NEAR"]
+
+
+def test_calix_5xx_returns_exit_2_with_error_blob(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream down")
+
+    rc = run(
+        ["economic", "upcoming"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 2
+    assert out["source"] == "calix"
+    assert "503" in out["error"]
+
+
+def test_calix_network_error_returns_exit_2(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("simulated network failure")
+
+    rc = run(
+        ["economic", "upcoming"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 2
+    assert out["source"] == "calix"
+
+
+def test_stale_payload_marks_degraded_true(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "tradays", "stale": True, "events": [],
+        })
+
+    rc = run(
+        ["economic", "upcoming"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["degraded"] is True

@@ -35,3 +35,84 @@ def test_parser_rejects_economic_with_no_verb(capsys) -> None:
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["economic"])
+
+
+def test_economic_upcoming_returns_enriched_json(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/calendar/economic/upcoming"
+        assert request.url.params["currencies"] == "USD"
+        return httpx.Response(200, json={
+            "updatedAt": "2026-05-14T12:00:00Z",
+            "source": "tradays",
+            "stale": False,
+            "events": [
+                {
+                    "id": "evt-1", "title": "FOMC Statement", "currency": "USD",
+                    "impact": "High", "scheduledAt": "2026-05-14T18:00:00Z",
+                    "forecast": None, "previous": "5.50%",
+                },
+            ],
+        })
+
+    rc = run(
+        ["economic", "upcoming", "--currencies", "USD", "--impact", "High", "--limit", "5"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out["events"][0]["minutes_until"] == 360  # 6h ahead
+    assert out["events"][0]["is_past"] is False
+    assert out["degraded"] is False
+
+
+def test_within_hours_filters_out_far_events(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "updatedAt": "x", "source": "tradays", "stale": False,
+            "events": [
+                {"id": "near", "title": "X", "currency": "USD", "impact": "High",
+                 "scheduledAt": "2026-05-14T13:00:00Z", "forecast": None, "previous": None},
+                {"id": "far",  "title": "Y", "currency": "USD", "impact": "High",
+                 "scheduledAt": "2026-05-16T13:00:00Z", "forecast": None, "previous": None},
+            ],
+        })
+
+    rc = run(
+        ["economic", "upcoming", "--within-hours", "12"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    ids = [e["id"] for e in out["events"]]
+    assert ids == ["near"]
+
+
+def test_raw_flag_emits_passthrough_payload(tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+
+    upstream = {
+        "updatedAt": "x", "source": "tradays", "stale": False,
+        "events": [{"id": "evt", "title": "X", "currency": "USD", "impact": "High",
+                    "scheduledAt": "2026-05-14T18:00:00Z", "forecast": None, "previous": None}],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=upstream)
+
+    rc = run(
+        ["economic", "upcoming", "--raw"],
+        now_utc=datetime(2026, 5, 14, 12, 0, 0, tzinfo=timezone.utc),
+        client_factory=_stub_client_factory(handler),
+        cache_dir=tmp_path,
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert out == upstream  # bytes-equal, no enrichment

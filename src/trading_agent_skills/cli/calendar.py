@@ -77,6 +77,43 @@ def _default_client_factory(cache_dir: Path) -> CalixClient:
     return CalixClient(cache_dir=cache_dir)
 
 
+def _emit(payload: dict) -> int:
+    print(json.dumps(payload, default=str))
+    return 0
+
+
+def _emit_calix_error(exc: CalixUnavailable) -> int:
+    print(json.dumps({"error": str(exc), "source": "calix"}))
+    return 2
+
+
+def _filter_within_hours(payload: dict, hours: int | None, now_utc: datetime) -> dict:
+    if hours is None or "events" not in payload:
+        return payload
+    cutoff_minutes = hours * 60
+    payload = dict(payload)
+    payload["events"] = [
+        e for e in payload["events"]
+        if e.get("minutes_until", 0) <= cutoff_minutes
+    ]
+    return payload
+
+
+def _filter_within_days(payload: dict, days: int | None, now_utc: datetime) -> dict:
+    if days is None or "earnings" not in payload:
+        return payload
+    payload = dict(payload)
+    payload["earnings"] = [
+        e for e in payload["earnings"]
+        if e.get("days_until", 0) <= days
+    ]
+    return payload
+
+
+def _impact_list(s: str) -> list[str]:
+    return [tok.strip() for tok in s.split(",") if tok.strip()]
+
+
 def run(
     argv: list[str],
     *,
@@ -90,7 +127,21 @@ def run(
     factory = client_factory or _default_client_factory
     client = factory(cache_dir or DEFAULT_CACHE_DIR)
 
-    # Dispatch table — populated in subsequent tasks.
+    try:
+        if args.noun == "economic" and args.verb == "upcoming":
+            resp = client.fetch_economic(
+                currencies=args.currencies,
+                impact=_impact_list(args.impact),
+                limit=args.limit,
+            )
+            if args.raw:
+                return _emit(resp.payload)
+            enriched = enrich_events(resp.payload, now_utc=now)
+            enriched = _filter_within_hours(enriched, args.within_hours, now)
+            return _emit(enriched)
+    except CalixUnavailable as exc:
+        return _emit_calix_error(exc)
+
     raise NotImplementedError(f"dispatch for {args.noun} {args.verb} not wired yet")
 
 

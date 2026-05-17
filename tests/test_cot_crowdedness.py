@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from trading_agent_skills.cot_crowdedness import (
+    SOCRATA_DISAGG,
+    SOCRATA_LEGACY,
     SYMBOL_TO_CFTC,
     CotEntry,
     Crowdedness,
@@ -192,3 +194,71 @@ def test_all_mapped_symbols_have_nonempty_contract_codes() -> None:
     for sym, c in SYMBOL_TO_CFTC.items():
         assert c.code, f"{sym} has empty contract code"
         assert c.label, f"{sym} has empty label"
+
+
+# ---------- Dataset dispatch (disagg vs legacy) ---------------------------
+
+
+def test_commodity_symbols_use_disagg_dataset() -> None:
+    for sym in ("USOIL", "XAUUSD", "XAGUSD"):
+        assert SYMBOL_TO_CFTC[sym].dataset == "disagg", \
+            f"{sym} should be on Disaggregated dataset (commodity)"
+
+
+def test_financial_symbols_use_legacy_dataset() -> None:
+    for sym in ("NAS100", "SPX500", "US30",
+                "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"):
+        assert SYMBOL_TO_CFTC[sym].dataset == "legacy", \
+            f"{sym} should be on Legacy dataset (financial — Disaggregated has no coverage)"
+
+
+def test_socrata_endpoint_urls_are_distinct() -> None:
+    # Guard against accidental same-URL-different-name regression.
+    assert SOCRATA_DISAGG != SOCRATA_LEGACY
+    assert "72hh-3qpy" in SOCRATA_DISAGG
+    assert "6dca-aqww" in SOCRATA_LEGACY
+
+
+def test_from_socrata_disagg_reads_managed_money_fields() -> None:
+    row = {
+        "report_date_as_yyyy_mm_dd": "2026-05-12T00:00:00.000",
+        "cftc_contract_market_code": "067651",
+        "m_money_positions_long_all": "150000",
+        "m_money_positions_short_all": "50000",
+        # Legacy fields should be IGNORED when dataset="disagg":
+        "noncomm_positions_long_all": "999",
+        "noncomm_positions_short_all": "999",
+    }
+    entry = CotEntry.from_socrata(row, dataset="disagg")
+    assert entry.mm_long == Decimal("150000")
+    assert entry.mm_short == Decimal("50000")
+    assert entry.mm_net == Decimal("100000")
+
+
+def test_from_socrata_legacy_reads_noncomm_fields() -> None:
+    row = {
+        "report_date_as_yyyy_mm_dd": "2026-05-12T00:00:00.000",
+        "cftc_contract_market_code": "099741",
+        "noncomm_positions_long_all": "224002",
+        "noncomm_positions_short_all": "183802",
+        # Disaggregated fields should be IGNORED when dataset="legacy":
+        "m_money_positions_long_all": "0",
+        "m_money_positions_short_all": "0",
+    }
+    entry = CotEntry.from_socrata(row, dataset="legacy")
+    assert entry.mm_long == Decimal("224002")
+    assert entry.mm_short == Decimal("183802")
+    assert entry.mm_net == Decimal("40200")
+
+
+def test_from_socrata_default_dataset_is_disagg() -> None:
+    # Back-compat: callers that don't pass dataset get Disaggregated semantics.
+    row = {
+        "report_date_as_yyyy_mm_dd": "2026-05-12T00:00:00.000",
+        "cftc_contract_market_code": "067651",
+        "m_money_positions_long_all": "100",
+        "m_money_positions_short_all": "50",
+    }
+    entry = CotEntry.from_socrata(row)
+    assert entry.mm_long == Decimal("100")
+    assert entry.mm_short == Decimal("50")

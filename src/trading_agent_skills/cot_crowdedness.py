@@ -41,7 +41,35 @@ DEFAULT_SHORT_THRESHOLD = Decimal("10")
 DEFAULT_WEEKS_GROWING = 3      # of last 4 reports must show growth on the crowded side
 DEFAULT_GROWING_WINDOW = 4
 
-SOCRATA_ENDPOINT = "https://publicreporting.cftc.gov/resource/72hh-3qpy.json"
+# CFTC publishes two relevant Socrata datasets — financial-futures symbols
+# (FX + equity indices) are NOT in the Disaggregated commodities report.
+#   - "disagg" → Disaggregated Futures Only (commodities: oil, metals, ags).
+#     Speculative-crowd fields: m_money_positions_long_all / _short_all.
+#   - "legacy" → Legacy Futures Only (all commodities + financials).
+#     Speculative-crowd fields: noncomm_positions_long_all / _short_all.
+# We use disagg for commodities (richer "managed-money" breakout) and legacy
+# for financials (the only place CFTC reports them in this format).
+DatasetKind = Literal["disagg", "legacy"]
+
+SOCRATA_DISAGG = "https://publicreporting.cftc.gov/resource/72hh-3qpy.json"
+SOCRATA_LEGACY = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
+
+_DATASET_CONFIG: dict[DatasetKind, dict[str, str]] = {
+    "disagg": {
+        "endpoint": SOCRATA_DISAGG,
+        "long_field": "m_money_positions_long_all",
+        "short_field": "m_money_positions_short_all",
+    },
+    "legacy": {
+        "endpoint": SOCRATA_LEGACY,
+        "long_field": "noncomm_positions_long_all",
+        "short_field": "noncomm_positions_short_all",
+    },
+}
+
+# Back-compat alias — kept so external callers that imported SOCRATA_ENDPOINT
+# don't break. Prefer SOCRATA_DISAGG / SOCRATA_LEGACY in new code.
+SOCRATA_ENDPOINT = SOCRATA_DISAGG
 
 
 # ---------- Symbol → CFTC contract map -------------------------------------
@@ -52,25 +80,33 @@ class CftcContract:
     code: str                  # cftc_contract_market_code (string)
     label: str                 # human-readable
     exchange: str              # e.g. NYMEX, COMEX, CME, CBT
+    dataset: DatasetKind = "disagg"   # which Socrata dataset to query
     note: str = ""             # optional caveat (e.g. inverse for USDJPY)
 
 
-# Codes verified against CFTC Disaggregated Futures-Only report headers.
-# Note: `inverse` means the symbol is quoted opposite the futures contract
+# Codes verified against CFTC report headers (live as of 2026-05-17).
+# Dataset choice: commodities use Disaggregated (managed-money breakout);
+# financials use Legacy (non-commercial breakout — TFF would also work but
+# coverage is identical and the legacy field is stable).
+#
+# `inverse` means the symbol is quoted opposite the futures contract
 # (e.g. USDJPY rises when JPY futures fall) — consumers must invert the tag.
 SYMBOL_TO_CFTC: dict[str, CftcContract] = {
-    "USOIL":  CftcContract("067651", "CRUDE OIL, LIGHT SWEET",         "NYMEX"),
-    "XAUUSD": CftcContract("088691", "GOLD",                            "COMEX"),
-    "XAGUSD": CftcContract("084691", "SILVER",                          "COMEX"),
-    "NAS100": CftcContract("209742", "E-MINI NASDAQ-100 INDEX",         "CME"),
-    "SPX500": CftcContract("13874A", "E-MINI S&P 500",                  "CME"),
-    "US30":   CftcContract("12460P", "E-MINI DOW JONES INDUSTRIAL AVG", "CBT"),
-    "EURUSD": CftcContract("099741", "EURO FX",                         "CME"),
-    "GBPUSD": CftcContract("096742", "BRITISH POUND",                   "CME"),
-    "USDJPY": CftcContract("097741", "JAPANESE YEN",                    "CME",
+    # Commodities — Disaggregated
+    "USOIL":  CftcContract("067651", "CRUDE OIL, LIGHT SWEET",         "NYMEX", "disagg"),
+    "XAUUSD": CftcContract("088691", "GOLD",                            "COMEX", "disagg"),
+    "XAGUSD": CftcContract("084691", "SILVER",                          "COMEX", "disagg"),
+    # Equity indices — Legacy (no Disaggregated coverage)
+    "NAS100": CftcContract("209742", "E-MINI NASDAQ-100 INDEX",         "CME",   "legacy"),
+    "SPX500": CftcContract("13874A", "E-MINI S&P 500",                  "CME",   "legacy"),
+    "US30":   CftcContract("124603", "E-MINI DOW JONES INDUSTRIAL AVG (x$5)", "CBT", "legacy"),
+    # FX majors — Legacy
+    "EURUSD": CftcContract("099741", "EURO FX",                         "CME",   "legacy"),
+    "GBPUSD": CftcContract("096742", "BRITISH POUND",                   "CME",   "legacy"),
+    "USDJPY": CftcContract("097741", "JAPANESE YEN",                    "CME",   "legacy",
                            note="inverse: JPY-long crowd = USDJPY-short crowd"),
-    "AUDUSD": CftcContract("232741", "AUSTRALIAN DOLLAR",               "CME"),
-    "USDCAD": CftcContract("090741", "CANADIAN DOLLAR",                 "CME",
+    "AUDUSD": CftcContract("232741", "AUSTRALIAN DOLLAR",               "CME",   "legacy"),
+    "USDCAD": CftcContract("090741", "CANADIAN DOLLAR",                 "CME",   "legacy",
                            note="inverse: CAD-long crowd = USDCAD-short crowd"),
     # UKOIL (Brent) trades on ICE, not CFTC — separate provider needed.
     # GER40 has no direct CFTC contract — use EUREX or FXSSI retail sentiment.
@@ -84,18 +120,30 @@ INVERSE_SYMBOLS = {sym for sym, c in SYMBOL_TO_CFTC.items() if "inverse" in c.no
 
 @dataclass(frozen=True)
 class CotEntry:
-    """One weekly Disaggregated COT row for a single contract."""
+    """One weekly COT row for a single contract.
+
+    The ``mm_long`` / ``mm_short`` fields name the original disaggregated-COT
+    "managed-money" actor category, but semantically hold whichever field is
+    the *speculative crowd* for the contract's dataset — managed-money for
+    disagg, non-commercial for legacy. Shapiro's contrarian thesis applies to
+    both; we keep the field names stable for storage compatibility.
+    """
     report_date: datetime              # tz-aware UTC, the Tuesday-as-of date
     contract_code: str
-    mm_long: Decimal                   # managed-money long positions
-    mm_short: Decimal                  # managed-money short positions
+    mm_long: Decimal                   # speculative-crowd long positions
+    mm_short: Decimal                  # speculative-crowd short positions
 
     @property
     def mm_net(self) -> Decimal:
         return self.mm_long - self.mm_short
 
     @classmethod
-    def from_socrata(cls, row: dict[str, Any]) -> "CotEntry":
+    def from_socrata(
+        cls,
+        row: dict[str, Any],
+        *,
+        dataset: DatasetKind = "disagg",
+    ) -> "CotEntry":
         date_raw = row.get("report_date_as_yyyy_mm_dd") or row["report_date_as_yyyy_mm_dd_text"]
         dt = (
             date_raw if isinstance(date_raw, datetime)
@@ -103,11 +151,12 @@ class CotEntry:
         )
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
+        cfg = _DATASET_CONFIG[dataset]
         return cls(
             report_date=dt,
             contract_code=str(row["cftc_contract_market_code"]),
-            mm_long=D(row.get("m_money_positions_long_all", "0")),
-            mm_short=D(row.get("m_money_positions_short_all", "0")),
+            mm_long=D(row.get(cfg["long_field"], "0")),
+            mm_short=D(row.get(cfg["short_field"], "0")),
         )
 
 
@@ -293,26 +342,31 @@ def load_cache(
 def fetch_socrata(
     contract_code: str,
     *,
+    dataset: DatasetKind = "disagg",
     weeks: int = DEFAULT_LOOKBACK_WEEKS,
-    endpoint: str = SOCRATA_ENDPOINT,
+    endpoint: Optional[str] = None,
     timeout: float = 20.0,
 ) -> list[CotEntry]:
-    """Pull weekly Disaggregated COT entries for one contract from CFTC.
+    """Pull weekly COT entries for one contract from CFTC.
 
-    No auth required; CFTC publishes the dataset publicly under Socrata.
-    Returns oldest-first.
+    Routes to the right Socrata endpoint based on ``dataset`` (Disaggregated
+    for commodities, Legacy for FX + indices). Caller can override
+    ``endpoint`` for tests/mirrors. Returns oldest-first.
+
+    No auth required.
     """
     import httpx  # lazy import — only fetcher needs it
 
+    url = endpoint or _DATASET_CONFIG[dataset]["endpoint"]
     params = {
         "$where": f"cftc_contract_market_code='{contract_code}'",
         "$order": "report_date_as_yyyy_mm_dd DESC",
         "$limit": str(weeks),
     }
-    resp = httpx.get(endpoint, params=params, timeout=timeout)
+    resp = httpx.get(url, params=params, timeout=timeout)
     resp.raise_for_status()
     rows = resp.json()
-    return list(reversed([CotEntry.from_socrata(r) for r in rows]))
+    return list(reversed([CotEntry.from_socrata(r, dataset=dataset) for r in rows]))
 
 
 def refresh_symbol(
@@ -321,11 +375,14 @@ def refresh_symbol(
     weeks: int = DEFAULT_LOOKBACK_WEEKS,
     cache_dir: Path = DEFAULT_CACHE_DIR,
 ) -> tuple[Path, int]:
-    """Fetch + cache one symbol's COT history. Returns (path, n_entries)."""
+    """Fetch + cache one symbol's COT history. Returns (path, n_entries).
+
+    Routes to the correct Socrata dataset based on the symbol's mapping.
+    """
     if symbol not in SYMBOL_TO_CFTC:
         raise ValueError(f"{symbol} has no CFTC mapping")
     contract = SYMBOL_TO_CFTC[symbol]
-    entries = fetch_socrata(contract.code, weeks=weeks)
+    entries = fetch_socrata(contract.code, dataset=contract.dataset, weeks=weeks)
     path = save_cache(symbol, entries, cache_dir=cache_dir)
     return path, len(entries)
 
@@ -353,6 +410,7 @@ class CrowdednessProvider(Protocol):
 
 __all__ = [
     "CrowdednessTag",
+    "DatasetKind",
     "CftcContract",
     "SYMBOL_TO_CFTC",
     "INVERSE_SYMBOLS",
@@ -370,4 +428,6 @@ __all__ = [
     "DEFAULT_CACHE_DIR",
     "DEFAULT_LOOKBACK_WEEKS",
     "SOCRATA_ENDPOINT",
+    "SOCRATA_DISAGG",
+    "SOCRATA_LEGACY",
 ]

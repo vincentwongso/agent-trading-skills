@@ -151,6 +151,20 @@ def ema(bars: list[Bar], period: int = 20) -> Decimal:
     return smoothed
 
 
+# ---------- SMA ------------------------------------------------------------
+
+
+def sma(bars: list[Bar], period: int = 20) -> Decimal:
+    """Simple moving average over the trailing ``period`` closes."""
+    _validate_period(period)
+    if len(bars) < period:
+        raise InsufficientBars(
+            f"SMA({period}) needs {period} bars, got {len(bars)}"
+        )
+    closes = [b.close for b in bars[-period:]]
+    return sum(closes, start=Decimal("0")) / Decimal(period)
+
+
 # ---------- Helpers ---------------------------------------------------------
 
 
@@ -204,6 +218,7 @@ __all__ = [
     "atr",
     "rsi",
     "ema",
+    "sma",
     "IndicatorSnapshot",
     "snapshot",
     "bars_from_mcp",

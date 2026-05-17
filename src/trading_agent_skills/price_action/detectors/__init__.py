@@ -21,6 +21,7 @@ SetupType = Literal[
     "ob_retest",
     "liq_sweep",
     "bos_pullback",
+    "failure_swing",
 ]
 Side = Literal["long", "short"]
 

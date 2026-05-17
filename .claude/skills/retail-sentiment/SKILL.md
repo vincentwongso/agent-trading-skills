@@ -35,28 +35,26 @@ on positioning alone — wait for the price-failure trigger
 
 Cache lives at `~/.trading-agent-skills/retail_sentiment_cache/<symbol>.json`.
 
-### Endpoint caveat (UNVERIFIED)
+### Endpoint (verified 2026-05-17)
 
-FXSSI does **NOT** publish a documented public JSON API. The fetcher's
-default endpoint (`https://fxssi.com/api/sentiment/<slug>`) is a best-effort
-guess and may need adjustment. The same applies to the per-symbol slug map
-(e.g. `GER40` → `DE30`, `UKOIL` → `BRENT`, `NAS100` → `NASDAQ100`).
+Single bulk endpoint: `GET https://fxssi.com/api/current-ratios` returns
+JSON with `.pairs.<slug>.average` (mean pct_long across reporting brokers)
+and a `formed` unix-epoch timestamp. One call covers all 25 mapped pairs —
+the CLI's bulk `refresh` (no `--symbol`) uses exactly one network call.
 
-If `refresh` fails with a 404 / shape mismatch, this is the first thing to
-fix. The function **signature** is stable — only the URL and the JSON-row
-parser inside `fetch_fxssi` should need updating. See the `TODO` markers in
-`src/trading_agent_skills/retail_sentiment.py`.
+No auth, no rate-limit observed at the cadence we use (every 2–4h).
 
-A future maintainer may need to switch from a JSON endpoint to an HTML scrape
-(BeautifulSoup) once FXSSI's actual surface is confirmed.
+The CDN mirror at `https://c.fxssi.com/api/current-ratios` returns a
+subset of pairs (currently FX + crypto only); the canonical `fxssi.com`
+host covers all 25.
 
 ## Supported symbols
 
 Run `trading-agent-skills-retail-sentiment list` for the live mapping:
 
-- **Indices** — `GER40` (DE30), `NAS100`, `SPX500`, `US30` (DJ30)
+- **Indices** — `GER40`, `NAS100`, `SPX500` (slug `SP500`), `US30`
 - **Metals** — `XAUUSD`, `XAGUSD`
-- **Energy** — `USOIL` (WTI), `UKOIL` (BRENT)
+- **Energy** — `USOIL` (slug `XTIUSD`), `UKOIL` (slug `XBRUSD`)
 - **FX majors** — `EURUSD`, `GBPUSD`, `USDJPY`, `AUDUSD`, `USDCAD`
 - **FX crosses** — `EURGBP`
 - **Crypto** — `BTCUSD`
@@ -92,13 +90,16 @@ trading-agent-skills-retail-sentiment refresh --symbol GER40
 ```
 
 Output: `{"refresh": [{"symbol": "...", "cached_at": "...", "n_entries": N}, ...]}`.
-The refresh **merges** new snapshots with the existing cache so history
-accumulates over time (FXSSI exposes the current snapshot, not a backfill —
-the growing-side filter needs prior samples).
+The bulk form does **one** network call and writes per-symbol caches; if a
+symbol is missing from the response (rare broker outages), it appears with
+`"error": "not_in_response"` so coverage gaps are surfaced.
+
+The refresh **merges** new snapshots with the existing cache (deduped by
+timestamp) so history accumulates over time — FXSSI exposes only the
+current snapshot, and the growing-side filter needs prior samples.
 
 Recommended cadence: **every 2–4 hours** (or any time before Stage 1's
-morning brief). Partial failures are surfaced per symbol; exit code 2 on any
-network error.
+morning brief). Exit code 2 on network error.
 
 ### 2. Get crowdedness for a symbol (per query, no network)
 
@@ -147,9 +148,9 @@ The `weeks_growing` adapts to short series: if you only have N snapshots
   refresh hint. Run the refresh command, then retry.
 - **Unmapped symbol** → CLI returns `{"error": "unmapped_symbol"}`. Add to
   `FXSSI_SYMBOL_MAP` if applicable.
-- **Endpoint shape mismatch on refresh** → fetcher raises `ValueError`; the
-  CLI surfaces it as a per-symbol error and exits 2. See the endpoint caveat
-  above — this is the first thing to fix when FXSSI is brought online.
+- **Endpoint shape mismatch on refresh** → `parse_response` raises
+  `ValueError` (top-level shape) or silently skips malformed pairs (per-pair
+  shape). Network errors exit 2.
 - **Stale cache** (`as_of` more than 24h old) → tag is still computed but
   the agent should warn the user and trigger a refresh.
 
@@ -159,8 +160,6 @@ The `weeks_growing` adapts to short series: if you only have N snapshots
   needs a price-failure trigger to fire (`failure_swing`).
 - **Don't full-size on FXSSI-only signals.** Halve the standard
   crowded-fade allocation per `strategies/crowded-fade.md`.
-- **Don't trust the cache without confirming the endpoint.** The default
-  fetcher URL is unverified — see the endpoint caveat above.
 - **Don't conflate `contract_code` with COT codes.** A `"fxssi:GER40"`
   prefix is the marker; consumers blending COT + FXSSI rely on this to
   distinguish sources.

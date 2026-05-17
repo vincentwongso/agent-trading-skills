@@ -23,6 +23,7 @@ from trading_agent_skills.retail_sentiment import (
     FXSSI_SYMBOL_MAP,
     compute_crowdedness,
     load_cache,
+    refresh_all,
     refresh_symbol,
 )
 
@@ -40,15 +41,27 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 def _cmd_refresh(args: argparse.Namespace) -> int:
     cache_dir = Path(args.cache_dir) if args.cache_dir else DEFAULT_CACHE_DIR
-    targets = [args.symbol] if args.symbol else sorted(FXSSI_SYMBOL_MAP)
     results = []
     rc = 0
-    for sym in targets:
+    if args.symbol:
         try:
-            path, n = refresh_symbol(sym, endpoint=args.endpoint, cache_dir=cache_dir)
-            results.append({"symbol": sym, "cached_at": str(path), "n_entries": n})
-        except Exception as exc:  # noqa: BLE001 — surface to caller, partial success allowed
-            results.append({"symbol": sym, "error": f"{type(exc).__name__}: {exc}"})
+            path, n = refresh_symbol(args.symbol, endpoint=args.endpoint, cache_dir=cache_dir)
+            results.append({"symbol": args.symbol, "cached_at": str(path), "n_entries": n})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"symbol": args.symbol, "error": f"{type(exc).__name__}: {exc}"})
+            rc = 2
+    else:
+        # Single network call refreshes every mapped symbol present in the response.
+        try:
+            bulk = refresh_all(endpoint=args.endpoint, cache_dir=cache_dir)
+            for sym in sorted(bulk):
+                path, n = bulk[sym]
+                results.append({"symbol": sym, "cached_at": str(path), "n_entries": n})
+            missing = sorted(set(FXSSI_SYMBOL_MAP) - set(bulk))
+            for sym in missing:
+                results.append({"symbol": sym, "error": "not_in_response"})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"error": f"{type(exc).__name__}: {exc}"})
             rc = 2
     print(json.dumps({"refresh": results}, indent=2))
     return rc

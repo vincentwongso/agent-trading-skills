@@ -16,6 +16,8 @@ from trading_agent_skills.retail_sentiment import (
     RetailSentimentEntry,
     compute_crowdedness,
     load_cache,
+    parse_response,
+    refresh_symbol,
     save_cache,
 )
 
@@ -180,3 +182,140 @@ def test_fxssi_symbol_map_covers_expected_symbols() -> None:
 def test_fxssi_symbol_map_slugs_nonempty() -> None:
     for sym, slug in FXSSI_SYMBOL_MAP.items():
         assert slug, f"{sym} has empty FXSSI slug"
+
+
+def test_fxssi_symbol_map_verified_oil_and_index_slugs() -> None:
+    # Slugs verified 2026-05-17 against live /api/current-ratios payload —
+    # guard against regressions if someone "tidies" them.
+    assert FXSSI_SYMBOL_MAP["USOIL"] == "XTIUSD"
+    assert FXSSI_SYMBOL_MAP["UKOIL"] == "XBRUSD"
+    assert FXSSI_SYMBOL_MAP["SPX500"] == "SP500"
+    assert FXSSI_SYMBOL_MAP["GER40"] == "GER40"
+    assert FXSSI_SYMBOL_MAP["NAS100"] == "NAS100"
+    assert FXSSI_SYMBOL_MAP["US30"] == "US30"
+
+
+# ---------- parse_response (real-shape fixture) ---------------------------
+
+
+def _real_shape_fixture() -> dict:
+    """Cut-down version of /api/current-ratios payload — same shape as live."""
+    return {
+        "server_time": 1779013021,
+        "formed": 1779012607,        # 2026-05-17T11:30:07Z
+        "broker_titles": {"fxssi": "FXSSI", "myfxbook": "MyFxBook"},
+        "pairs": {
+            "XAUUSD": {
+                "amarkets": "66.70", "dukscopy": "70.53", "fxssi": "82.44",
+                "ftroanda": "90.13", "fxblue": "72.90", "instfor": "61.95",
+                "myfxbook": "69.25", "xm": "57.30",
+                "average": "74.82",
+            },
+            "XTIUSD": {  # = our USOIL
+                "amarkets": "55.10", "fxssi": "62.00",
+                "average": "58.55",
+            },
+            "BTCUSD": {
+                "amarkets": "51.22", "fxssi": "71.61",
+                "average": "52.54",
+            },
+            "ZZZZZZ": {"average": "99.00"},  # unmapped — should be skipped
+            "BROKEN": "not-a-dict",          # malformed — should be skipped
+        },
+    }
+
+
+def test_parse_response_extracts_mapped_pairs_only() -> None:
+    parsed = parse_response(_real_shape_fixture())
+    assert set(parsed) == {"XAUUSD", "USOIL", "BTCUSD"}    # ZZZZZZ + BROKEN dropped
+
+
+def test_parse_response_uses_average_as_pct_long() -> None:
+    parsed = parse_response(_real_shape_fixture())
+    assert parsed["XAUUSD"].pct_long == Decimal("74.82")
+    assert parsed["XAUUSD"].pct_short == Decimal("100") - Decimal("74.82")
+
+
+def test_parse_response_translates_slug_to_our_symbol() -> None:
+    parsed = parse_response(_real_shape_fixture())
+    assert "USOIL" in parsed
+    assert parsed["USOIL"].symbol == "USOIL"
+    assert parsed["USOIL"].pct_long == Decimal("58.55")
+
+
+def test_parse_response_uses_formed_timestamp() -> None:
+    parsed = parse_response(_real_shape_fixture())
+    # formed=1779012607 → 2026-05-17 10:10:07 UTC
+    assert parsed["XAUUSD"].timestamp == datetime(2026, 5, 17, 10, 10, 7, tzinfo=timezone.utc)
+
+
+def test_parse_response_rejects_missing_pairs_key() -> None:
+    with pytest.raises(ValueError, match="missing 'pairs'"):
+        parse_response({"server_time": 123})
+
+
+def test_parse_response_rejects_bad_formed_value() -> None:
+    with pytest.raises(ValueError, match="'formed' timestamp invalid"):
+        parse_response({"pairs": {}, "formed": "not-a-number"})
+
+
+def test_parse_response_falls_back_to_now_when_no_timestamp() -> None:
+    # No formed, no server_time → uses datetime.now(UTC); we just assert it's tz-aware.
+    parsed = parse_response({"pairs": {
+        "XAUUSD": {"average": "60.00"},
+    }})
+    assert parsed["XAUUSD"].timestamp.tzinfo is not None
+
+
+def test_xauusd_at_75_pct_long_is_crowded_long_via_real_shape() -> None:
+    # End-to-end on the real-shape XAUUSD entry (74.82% long, just under
+    # default 75 threshold → neutral). Tweak threshold to 74 to flip.
+    parsed = parse_response(_real_shape_fixture())
+    entries = [parsed["XAUUSD"]]
+    snap = compute_crowdedness("XAUUSD", entries, long_threshold=Decimal("74"))
+    assert snap.tag == "crowded_long"
+    assert snap.percentile == Decimal("74.82")
+
+
+# ---------- refresh_symbol with pre_fetched (no network) -----------------
+
+
+def test_refresh_symbol_with_pre_fetched_skips_network(tmp_path: Path) -> None:
+    parsed = parse_response(_real_shape_fixture())
+    path, n = refresh_symbol("XAUUSD", cache_dir=tmp_path, pre_fetched=parsed)
+    assert path.exists()
+    assert n == 1
+
+
+def test_refresh_symbol_merges_distinct_timestamps(tmp_path: Path) -> None:
+    parsed = parse_response(_real_shape_fixture())
+
+    # Seed cache with an older entry under a different timestamp.
+    older = RetailSentimentEntry(
+        timestamp=datetime(2026, 5, 16, 11, 30, 7, tzinfo=timezone.utc),
+        symbol="XAUUSD",
+        pct_long=Decimal("60"),
+        pct_short=Decimal("40"),
+        source="fxssi",
+    )
+    save_cache("XAUUSD", [older], cache_dir=tmp_path)
+
+    path, n = refresh_symbol("XAUUSD", cache_dir=tmp_path, pre_fetched=parsed)
+    assert n == 2
+
+    loaded = load_cache("XAUUSD", cache_dir=tmp_path)
+    assert {e.pct_long for e in loaded} == {Decimal("60"), Decimal("74.82")}
+
+
+def test_refresh_symbol_dedupes_same_timestamp(tmp_path: Path) -> None:
+    parsed = parse_response(_real_shape_fixture())
+    refresh_symbol("XAUUSD", cache_dir=tmp_path, pre_fetched=parsed)
+    # Second call with the same fetched bundle should NOT add a duplicate.
+    _, n = refresh_symbol("XAUUSD", cache_dir=tmp_path, pre_fetched=parsed)
+    assert n == 1
+
+
+def test_refresh_symbol_raises_when_symbol_missing_from_response(tmp_path: Path) -> None:
+    parsed = parse_response(_real_shape_fixture())   # has XAUUSD, USOIL, BTCUSD
+    with pytest.raises(ValueError, match="did not contain"):
+        refresh_symbol("GER40", cache_dir=tmp_path, pre_fetched=parsed)

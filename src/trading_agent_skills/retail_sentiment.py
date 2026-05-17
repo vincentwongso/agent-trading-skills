@@ -9,14 +9,37 @@ The signal is **weaker than COT** (retail flow is noisier than reportable
 managed-money positioning) — the crowded-fade playbook calls for halving
 position size when this provider is the sole crowdedness source.
 
+Data source
+-----------
+``https://fxssi.com/api/current-ratios`` returns one JSON blob with every
+mapped pair at once. Schema verified 2026-05-17::
+
+    {
+      "pairs": {
+        "XAUUSD": {
+          "amarkets": "66.70", "dukscopy": "70.53", "fxssi": "82.44",
+          ...,
+          "average": "74.82"     # ← pct_long averaged across brokers
+        },
+        ...
+      },
+      "server_time": 1779013021,    # request-side unix epoch
+      "formed":      1779012607,    # data-assembly unix epoch (used as ts)
+      "broker_titles": {...}, "broker_weights": {...}, ...
+    }
+
+``average`` is the mean *percent-long* across the reporting brokers; we
+derive ``pct_short = 100 - average``. One call refreshes every symbol — no
+per-symbol fan-out needed.
+
 Design boundaries
 -----------------
-- **Pure functions** (`compute_crowdedness`, `_count_growing`) take a list of
-  ``RetailSentimentEntry`` records and return a ``Crowdedness`` snapshot
-  (reusing the dataclass from :mod:`cot_crowdedness` so blends are trivial).
-- **Live fetcher** (`fetch_fxssi`) uses httpx against FXSSI's web sentiment
-  endpoint. **The exact endpoint is unverified** — see ``fetch_fxssi`` for
-  the TODO.
+- **Pure functions** (``compute_crowdedness``, ``parse_response``, ``_count_growing``)
+  take a list of ``RetailSentimentEntry`` records (or a raw JSON dict) and
+  return a ``Crowdedness`` snapshot (reusing the dataclass from
+  :mod:`cot_crowdedness` so blends are trivial).
+- **Live fetcher** (``fetch_all_fxssi``) uses httpx against the verified
+  endpoint and returns a ``{our_symbol: RetailSentimentEntry}`` dict.
 - **Cache** under ``~/.trading-agent-skills/retail_sentiment_cache/<symbol>.json``.
 - Implements the :class:`cot_crowdedness.CrowdednessProvider` protocol via
   :class:`FxssiProvider` so the consumer (Stage 1 / Stage 2) can swap or
@@ -26,7 +49,7 @@ Design boundaries
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -44,29 +67,23 @@ DEFAULT_CACHE_DIR = Path.home() / ".trading-agent-skills" / "retail_sentiment_ca
 DEFAULT_LONG_THRESHOLD = Decimal("75")
 DEFAULT_SHORT_THRESHOLD = Decimal("75")
 DEFAULT_GROWING_WINDOW = 4
-
-# TODO(retail_sentiment): FXSSI does NOT publish a documented public JSON API.
-# This URL pattern is a best-effort guess. Confirm the actual endpoint
-# (likely scrape-then-parse) before relying on `fetch_fxssi` in production.
-DEFAULT_ENDPOINT = "https://fxssi.com/api/sentiment"
+DEFAULT_ENDPOINT = "https://fxssi.com/api/current-ratios"
 
 
 # ---------- Symbol → FXSSI symbol-slug map ---------------------------------
 
-# TODO(retail_sentiment): verify each FXSSI slug against the live site.
-# Some slugs (GER40 → DE30, UKOIL → BRENT, US30 → DJ30, NAS100 → NASDAQ100,
-# SPX500 → SP500) are conventional FXSSI/MT5-broker naming but unverified.
-# Leaving as identity for FX majors; will likely need adjustment after
-# confirming the actual endpoint contract.
+# Slugs verified 2026-05-17 against live ``/api/current-ratios`` payload
+# (25 pairs available). Symbols not listed below have no FXSSI coverage on
+# the public endpoint.
 FXSSI_SYMBOL_MAP: dict[str, str] = {
-    "GER40":  "DE30",
-    "UKOIL":  "BRENT",
+    "GER40":  "GER40",
+    "UKOIL":  "XBRUSD",
     "XAUUSD": "XAUUSD",
     "XAGUSD": "XAGUSD",
-    "USOIL":  "WTI",
-    "NAS100": "NASDAQ100",
+    "USOIL":  "XTIUSD",
+    "NAS100": "NAS100",
     "SPX500": "SP500",
-    "US30":   "DJ30",
+    "US30":   "US30",
     "EURUSD": "EURUSD",
     "GBPUSD": "GBPUSD",
     "USDJPY": "USDJPY",
@@ -84,44 +101,73 @@ FXSSI_SYMBOL_MAP: dict[str, str] = {
 class RetailSentimentEntry:
     """One snapshot of retail long/short percentages for a single symbol."""
 
-    timestamp: datetime           # tz-aware UTC
+    timestamp: datetime           # tz-aware UTC (FXSSI ``formed`` epoch)
     symbol: str                   # our symbol (e.g. "GER40"), not FXSSI's slug
     pct_long: Decimal             # 0..100
     pct_short: Decimal            # 0..100
     source: str = "fxssi"
 
-    @classmethod
-    def from_fxssi(cls, symbol: str, row: dict[str, Any]) -> "RetailSentimentEntry":
-        """Parse a FXSSI JSON row of the form
-        ``{"long": "62.3", "short": "37.7", "timestamp": "..."}``.
 
-        Raises ``ValueError`` if required keys are missing.
-        """
-        try:
-            long_raw = row["long"]
-            short_raw = row["short"]
-        except KeyError as exc:
-            raise ValueError(
-                f"FXSSI row missing required key {exc!s}; got keys={list(row)}"
-            ) from exc
+def _parse_pair_entry(
+    symbol: str,
+    pair_blob: dict[str, Any],
+    timestamp: datetime,
+) -> RetailSentimentEntry:
+    """Build a ``RetailSentimentEntry`` from one ``.pairs.<slug>`` blob.
 
-        ts_raw = row.get("timestamp") or row.get("time") or row.get("date")
-        if ts_raw is None:
-            ts = datetime.now(timezone.utc)
-        elif isinstance(ts_raw, datetime):
-            ts = ts_raw
-        else:
-            ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
+    Uses the ``average`` field (mean pct_long across reporting brokers).
+    """
+    try:
+        avg_long = D(pair_blob["average"])
+    except KeyError as exc:
+        raise ValueError(
+            f"FXSSI pair blob for {symbol} missing 'average'; got keys={list(pair_blob)}"
+        ) from exc
+    return RetailSentimentEntry(
+        timestamp=timestamp,
+        symbol=symbol,
+        pct_long=avg_long,
+        pct_short=Decimal("100") - avg_long,
+        source="fxssi",
+    )
 
-        return cls(
-            timestamp=ts,
-            symbol=symbol,
-            pct_long=D(long_raw),
-            pct_short=D(short_raw),
-            source="fxssi",
+
+def parse_response(body: dict[str, Any]) -> dict[str, RetailSentimentEntry]:
+    """Parse one ``/api/current-ratios`` response into ``{our_symbol: entry}``.
+
+    Skips slugs not in :data:`FXSSI_SYMBOL_MAP`. Raises ``ValueError`` if the
+    top-level shape is wrong.
+    """
+    if not isinstance(body, dict) or "pairs" not in body:
+        raise ValueError(
+            f"FXSSI response missing 'pairs' key; top-level keys="
+            f"{list(body) if isinstance(body, dict) else type(body).__name__}"
         )
+    pairs = body.get("pairs") or {}
+    if not isinstance(pairs, dict):
+        raise ValueError(f"FXSSI 'pairs' is not a dict; got {type(pairs).__name__}")
+
+    formed = body.get("formed") or body.get("server_time")
+    if formed is None:
+        ts = datetime.now(timezone.utc)
+    else:
+        try:
+            ts = datetime.fromtimestamp(int(formed), tz=timezone.utc)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"FXSSI 'formed' timestamp invalid: {formed!r}") from exc
+
+    slug_to_symbol = {slug: sym for sym, slug in FXSSI_SYMBOL_MAP.items()}
+    out: dict[str, RetailSentimentEntry] = {}
+    for slug, pair_blob in pairs.items():
+        our_sym = slug_to_symbol.get(slug)
+        if our_sym is None or not isinstance(pair_blob, dict):
+            continue
+        try:
+            out[our_sym] = _parse_pair_entry(our_sym, pair_blob, ts)
+        except ValueError:
+            # Skip malformed pairs — refresh of other symbols should still succeed.
+            continue
+    return out
 
 
 # ---------- Pure scoring ---------------------------------------------------
@@ -138,15 +184,15 @@ def _count_growing(
 
     Adapts to short series: if fewer than ``window+1`` samples are available
     uses all consecutive deltas. Returns 0 for ``neutral``.
+
+    Note: callers pass the *crowded-side* pct (pct_long for crowded_long,
+    pct_short for crowded_short); growing in both cases means delta > 0.
     """
     if side == "neutral" or len(pcts) < 2:
         return 0
     effective = min(window, len(pcts) - 1)
     recent = pcts[-(effective + 1):]
     deltas = [recent[i + 1] - recent[i] for i in range(effective)]
-    if side == "crowded_long":
-        return sum(1 for d in deltas if d > 0)
-    # crowded_short: pcts here is pct_short series; growing = increasing.
     return sum(1 for d in deltas if d > 0)
 
 
@@ -270,7 +316,47 @@ def load_cache(
     ]
 
 
+def _merge_into_cache(
+    symbol: str,
+    new_entry: RetailSentimentEntry,
+    *,
+    cache_dir: Path,
+) -> tuple[Path, int]:
+    """Append ``new_entry`` to the symbol's cache if its timestamp is new.
+
+    FXSSI exposes the current snapshot only; the ``weeks_growing`` filter
+    needs accumulated history, so refreshes merge rather than overwrite.
+    Returns ``(path, n_entries_after_merge)``.
+    """
+    existing = load_cache(symbol, cache_dir=cache_dir)
+    seen = {e.timestamp.isoformat() for e in existing}
+    if new_entry.timestamp.isoformat() in seen:
+        merged = existing
+    else:
+        merged = existing + [new_entry]
+    path = save_cache(symbol, merged, cache_dir=cache_dir)
+    return path, len(merged)
+
+
 # ---------- Live fetcher (FXSSI sentiment) ---------------------------------
+
+
+def fetch_all_fxssi(
+    *,
+    endpoint: str = DEFAULT_ENDPOINT,
+    timeout: float = 20.0,
+) -> dict[str, RetailSentimentEntry]:
+    """Pull current retail-sentiment for every mapped symbol in one call.
+
+    Returns ``{our_symbol: RetailSentimentEntry}``. Symbols not present in
+    the FXSSI response or not in :data:`FXSSI_SYMBOL_MAP` are absent from
+    the result. Raises on HTTP error or malformed top-level shape.
+    """
+    import httpx  # lazy import — only fetcher needs it
+
+    resp = httpx.get(endpoint, timeout=timeout)
+    resp.raise_for_status()
+    return parse_response(resp.json())
 
 
 def fetch_fxssi(
@@ -279,47 +365,20 @@ def fetch_fxssi(
     endpoint: str = DEFAULT_ENDPOINT,
     timeout: float = 20.0,
 ) -> list[RetailSentimentEntry]:
-    """Pull current retail-sentiment snapshot for one symbol from FXSSI.
+    """Fetch the current snapshot for one symbol.
 
-    .. warning::
-        FXSSI does NOT publish a documented public JSON API. This fetcher is
-        **best-effort** — it tries ``<endpoint>/<fxssi_slug>`` and expects a
-        JSON shape of ``{"long": "62.3", "short": "37.7", "timestamp": "..."}``
-        (or a list of such rows).
-
-        If the shape doesn't match, the function raises a clear ``ValueError``.
-        Once FXSSI's actual public surface is confirmed (likely an HTML scrape
-        or a different endpoint path), only the URL and the row-parsing
-        function should need updating — the signature is stable.
-
-    Returns oldest-first (list of one for the snapshot endpoint, or a series
-    if the endpoint returns a history array).
+    Thin wrapper around :func:`fetch_all_fxssi` for callers that only want
+    one symbol — the bulk fetch is the same network cost either way.
     """
-    import httpx  # lazy import — only fetcher needs it
-
     if symbol not in FXSSI_SYMBOL_MAP:
         raise ValueError(f"{symbol} has no FXSSI mapping (see FXSSI_SYMBOL_MAP)")
-    slug = FXSSI_SYMBOL_MAP[symbol]
-    url = f"{endpoint.rstrip('/')}/{slug}"
-
-    resp = httpx.get(url, timeout=timeout)
-    resp.raise_for_status()
-    body = resp.json()
-
-    if isinstance(body, dict):
-        rows = [body]
-    elif isinstance(body, list):
-        rows = body
-    else:
+    all_entries = fetch_all_fxssi(endpoint=endpoint, timeout=timeout)
+    entry = all_entries.get(symbol)
+    if entry is None:
         raise ValueError(
-            f"FXSSI response shape unexpected for {symbol}: type={type(body).__name__}"
+            f"FXSSI response did not contain {symbol} (slug {FXSSI_SYMBOL_MAP[symbol]})"
         )
-
-    if not rows:
-        raise ValueError(f"FXSSI returned empty payload for {symbol} at {url}")
-
-    entries = [RetailSentimentEntry.from_fxssi(symbol, r) for r in rows]
-    return sorted(entries, key=lambda e: e.timestamp)
+    return [entry]
 
 
 def refresh_symbol(
@@ -327,30 +386,45 @@ def refresh_symbol(
     *,
     endpoint: str = DEFAULT_ENDPOINT,
     cache_dir: Path = DEFAULT_CACHE_DIR,
+    pre_fetched: Optional[dict[str, RetailSentimentEntry]] = None,
 ) -> tuple[Path, int]:
-    """Fetch + cache one symbol's retail-sentiment snapshot. Returns
-    ``(path, n_entries)``.
+    """Fetch + merge one symbol's snapshot into its cache.
 
-    On a refresh, we MERGE the new snapshot(s) with the existing cache so
-    history accumulates over time (FXSSI exposes the current snapshot, not
-    a backfill — the growing-side filter needs prior samples).
+    If ``pre_fetched`` is supplied (e.g. by :func:`refresh_all`), no network
+    call is made — the bulk fetch is reused. Returns ``(path, n_entries)``.
     """
     if symbol not in FXSSI_SYMBOL_MAP:
         raise ValueError(f"{symbol} has no FXSSI mapping")
 
-    new_entries = fetch_fxssi(symbol, endpoint=endpoint)
-    existing = load_cache(symbol, cache_dir=cache_dir)
+    if pre_fetched is None:
+        bulk = fetch_all_fxssi(endpoint=endpoint)
+    else:
+        bulk = pre_fetched
+    entry = bulk.get(symbol)
+    if entry is None:
+        raise ValueError(
+            f"FXSSI response did not contain {symbol} (slug {FXSSI_SYMBOL_MAP[symbol]})"
+        )
+    return _merge_into_cache(symbol, entry, cache_dir=cache_dir)
 
-    seen: set[str] = {e.timestamp.isoformat() for e in existing}
-    merged = list(existing)
-    for e in new_entries:
-        key = e.timestamp.isoformat()
-        if key not in seen:
-            merged.append(e)
-            seen.add(key)
 
-    path = save_cache(symbol, merged, cache_dir=cache_dir)
-    return path, len(merged)
+def refresh_all(
+    *,
+    endpoint: str = DEFAULT_ENDPOINT,
+    cache_dir: Path = DEFAULT_CACHE_DIR,
+) -> dict[str, tuple[Path, int]]:
+    """Single network call + per-symbol cache merge for every mapped symbol
+    present in the response.
+
+    Returns ``{our_symbol: (cache_path, n_entries)}``. Symbols absent from
+    the FXSSI payload (e.g. broker outage) are silently skipped — callers
+    can diff against :data:`FXSSI_SYMBOL_MAP` to detect coverage gaps.
+    """
+    bulk = fetch_all_fxssi(endpoint=endpoint)
+    out: dict[str, tuple[Path, int]] = {}
+    for symbol in bulk:
+        out[symbol] = _merge_into_cache(symbol, bulk[symbol], cache_dir=cache_dir)
+    return out
 
 
 # ---------- Provider --------------------------------------------------------
@@ -392,12 +466,15 @@ __all__ = [
     "RetailSentimentEntry",
     "FxssiProvider",
     "FXSSI_SYMBOL_MAP",
+    "parse_response",
     "compute_crowdedness",
     "cache_path",
     "save_cache",
     "load_cache",
+    "fetch_all_fxssi",
     "fetch_fxssi",
     "refresh_symbol",
+    "refresh_all",
     "DEFAULT_CACHE_DIR",
     "DEFAULT_ENDPOINT",
     "DEFAULT_LONG_THRESHOLD",
